@@ -103,6 +103,12 @@ export function AddFromLinkDialog() {
                 from YouTube links.
               </p>
               <p className="mt-1 text-muted-foreground">
+                Legal options: the{" "}
+                <strong>YouTube Audio Library</strong> (free MP3 downloads in
+                YouTube Studio), a download link provided by the uploader, or
+                purchasing the track.
+              </p>
+              <p className="mt-1 text-muted-foreground">
                 If you own or have lawfully obtained the audio file, add it
                 with <strong>Add a local file</strong> below.
               </p>
