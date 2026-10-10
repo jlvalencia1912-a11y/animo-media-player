@@ -5,6 +5,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import { play, pause, next, prev, seek } from "./player";
 import { getCover } from "./cover";
+import { restoreMainWindow } from "./window";
 
 export interface MiniState {
   trackId: string | null;
@@ -53,6 +54,9 @@ export function startBridge() {
     switch (e.payload.cmd) {
       case "hello":
         emitTo("mini", "amp:state", buildState()).catch(() => {});
+        break;
+      case "show-main":
+        restoreMainWindow();
         break;
       case "toggle":
         s.isPlaying ? pause() : play();

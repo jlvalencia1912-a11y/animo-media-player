@@ -86,18 +86,29 @@ export async function scanLibrary(folders: string[]): Promise<ScanResult> {
   }
 }
 
-/** Metadata read for explicitly-chosen files (New Songs workflow). */
-export async function scanFiles(paths: string[]): Promise<ScannedFile[]> {
-  const result = await invoke<ScanResult>("scan_files", { paths });
-  return result.files;
+/** Metadata read for explicitly-chosen files (New Songs workflow).
+ *  Reads ONLY the given files — never triggers a library rescan. */
+export async function scanFiles(paths: string[]): Promise<ScanResult> {
+  return invoke<ScanResult>("scan_files", { paths });
 }
 
+export interface AddResult {
+  added: number;
+  skipped: number;
+}
+
+/** Add scanned files to the library. Files already in the library (by path)
+ *  are skipped rather than duplicated. Returns counts for UI feedback. */
 export async function addFilesAsTracks(
   files: ScannedFile[],
   sectionId: string,
   overrides?: Map<string, { title?: string; trackNumber?: number | null }>,
-) {
-  const tracks = files.map((f) => {
+): Promise<AddResult> {
+  const existing = new Set(
+    useAppStore.getState().tracks.map((t) => norm(t.id)),
+  );
+  const fresh = files.filter((f) => !existing.has(norm(f.path)));
+  const tracks = fresh.map((f) => {
     const o = overrides?.get(f.path);
     const t = toTrack(f, undefined);
     return {
@@ -105,7 +116,11 @@ export async function addFilesAsTracks(
       title: o?.title ?? t.title,
       trackNumber: o?.trackNumber !== undefined ? o.trackNumber : t.trackNumber,
       sectionId,
+      missing: false,
     };
   });
-  useAppStore.getState().addTracks(tracks);
+  if (tracks.length > 0) {
+    useAppStore.getState().addTracks(tracks);
+  }
+  return { added: tracks.length, skipped: files.length - fresh.length };
 }

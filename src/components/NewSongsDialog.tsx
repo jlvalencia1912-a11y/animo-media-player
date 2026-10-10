@@ -13,7 +13,7 @@ interface Row {
 }
 
 export function NewSongsDialog() {
-  const { showNewSongs, setShowNewSongs, sections } = useAppStore();
+  const { showNewSongs, setShowNewSongs, sections, setView } = useAppStore();
   const [rows, setRows] = useState<Row[]>([]);
   const [sectionId, setSectionId] = useState("new-songs");
   const [busy, setBusy] = useState(false);
@@ -21,22 +21,33 @@ export function NewSongsDialog() {
 
   const pickFiles = async () => {
     setError(null);
-    const picked = await open({
-      multiple: true,
-      filters: [{ name: "Audio", extensions: [...AUDIO_EXTENSIONS] }],
-    });
+    let picked: string | string[] | null = null;
+    try {
+      picked = await open({
+        multiple: true,
+        filters: [{ name: "Audio", extensions: [...AUDIO_EXTENSIONS] }],
+      });
+    } catch (e) {
+      setError(`Could not open the file picker: ${String(e)}`);
+      return;
+    }
     if (!picked) return;
     const paths = Array.isArray(picked) ? picked : [picked];
     setBusy(true);
     try {
-      const files = await scanFiles(paths);
-      if (files.length === 0) {
-        setError("No readable audio files were selected.");
+      const result = await scanFiles(paths);
+      if (result.errors.length > 0) {
+        setError(result.errors.join("\n"));
+      }
+      if (result.files.length === 0) {
+        if (result.errors.length === 0) {
+          setError("No readable audio files were selected.");
+        }
         return;
       }
       setRows((prev) => [
         ...prev,
-        ...files
+        ...result.files
           .filter((f) => !prev.some((r) => r.file.path === f.path))
           .map((f) => ({
             file: f,
@@ -44,6 +55,8 @@ export function NewSongsDialog() {
             trackNumber: f.trackNumber != null ? String(f.trackNumber) : "",
           })),
       ]);
+    } catch (e) {
+      setError(`Could not read the selected files: ${String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -54,6 +67,7 @@ export function NewSongsDialog() {
 
   const addAll = async () => {
     if (!rows.length) return;
+    setError(null);
     const overrides = new Map(
       rows.map((r) => [
         r.file.path,
@@ -63,13 +77,26 @@ export function NewSongsDialog() {
         },
       ]),
     );
-    await addFilesAsTracks(
+    const { added, skipped } = await addFilesAsTracks(
       rows.map((r) => r.file),
       sectionId,
       overrides,
     );
+    if (added === 0 && skipped > 0) {
+      setError(
+        skipped === 1
+          ? "That file is already in your library — nothing was added."
+          : `All ${skipped} files are already in your library — nothing was added.`,
+      );
+      return;
+    }
     setRows([]);
     setShowNewSongs(false);
+    // Take the user straight to where the tracks landed
+    setView({ kind: "section", id: sectionId });
+    if (skipped > 0) {
+      console.info(`Animo: skipped ${skipped} file(s) already in the library.`);
+    }
   };
 
   const close = () => {
@@ -112,11 +139,16 @@ export function NewSongsDialog() {
               ))}
           </select>
         </div>
-        {error && <p className="text-sm text-warning">{error}</p>}
+        {error && (
+          <p role="alert" className="whitespace-pre-line text-sm text-warning">
+            {error}
+          </p>
+        )}
 
         {rows.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Select MP3, FLAC, WAV, AAC, or M4A files. You can adjust each track
+            Select MP3, FLAC, WAV, AAC, or M4A files. Only the files you pick
+            are read — nothing else is rescanned. You can adjust each track
             number and title before adding them to the section.
           </p>
         ) : (

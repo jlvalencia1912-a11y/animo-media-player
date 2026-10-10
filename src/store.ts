@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   Track,
   Playlist,
@@ -51,6 +51,7 @@ interface AppState {
   showNewSongs: boolean;
   showHistory: boolean;
   showEqualizer: boolean;
+  showLinkDialog: boolean;
   miniPlayerOpen: boolean;
 
   // Settings
@@ -101,9 +102,44 @@ interface AppState {
   setShowNewSongs: (b: boolean) => void;
   setShowHistory: (b: boolean) => void;
   setShowEqualizer: (b: boolean) => void;
+  setShowLinkDialog: (b: boolean) => void;
   setMiniPlayerOpen: (b: boolean) => void;
   incrementPlayCount: (trackId: string) => void;
   markTracksMissing: (paths: string[]) => void;
+}
+
+// Persisted state is written at most once per second and flushed on unload.
+// Without this, every set() (position ticks during playback, scan progress
+// events) synchronously serialized the whole track library to localStorage,
+// which made the UI stutter badly on large libraries.
+function debouncedStorage(name: string, delayMs = 1000) {
+  let pending: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const flush = () => {
+    timer = null;
+    if (pending !== null) {
+      try {
+        localStorage.setItem(name, pending);
+      } catch {
+        // storage full / unavailable — non-fatal
+      }
+      pending = null;
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", flush);
+  }
+  return {
+    getItem: () => localStorage.getItem(name),
+    setItem: (_n: string, value: string) => {
+      pending = value;
+      if (!timer) timer = setTimeout(flush, delayMs);
+    },
+    removeItem: () => {
+      pending = null;
+      localStorage.removeItem(name);
+    },
+  };
 }
 
 export const useAppStore = create<AppState>()(
@@ -138,6 +174,7 @@ export const useAppStore = create<AppState>()(
       showNewSongs: false,
       showHistory: false,
       showEqualizer: false,
+      showLinkDialog: false,
       miniPlayerOpen: false,
 
       settings: {
@@ -152,13 +189,15 @@ export const useAppStore = create<AppState>()(
       },
 
       setTracks: (tracks) => set({ tracks }),
-      addTracks: (incoming) =>
+      addTracks: (incoming) => {
+        const existing = new Set(get().tracks.map((t) => t.id.toLowerCase()));
         set({
           tracks: [
             ...get().tracks,
-            ...incoming.filter((t) => !get().tracks.some((x) => x.id === t.id)),
+            ...incoming.filter((t) => !existing.has(t.id.toLowerCase())),
           ],
-        }),
+        });
+      },
       updateTrack: (id, updates) =>
         set({
           tracks: get().tracks.map((t) =>
@@ -237,6 +276,7 @@ export const useAppStore = create<AppState>()(
       setShowNewSongs: (showNewSongs) => set({ showNewSongs }),
       setShowHistory: (showHistory) => set({ showHistory }),
       setShowEqualizer: (showEqualizer) => set({ showEqualizer }),
+      setShowLinkDialog: (showLinkDialog) => set({ showLinkDialog }),
       setMiniPlayerOpen: (miniPlayerOpen) => set({ miniPlayerOpen }),
       incrementPlayCount: (trackId) =>
         set({
@@ -255,6 +295,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "animo-media-player",
+      storage: createJSONStorage(() => debouncedStorage("animo-media-player")),
       partialize: (s) => ({
         sections: s.sections,
         playlists: s.playlists,

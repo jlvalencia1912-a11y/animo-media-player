@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Search, ArrowUpDown, Music2, FolderPlus, Sparkles, Tags } from "lucide-react";
+import { Search, ArrowUpDown, Music2, FolderPlus, Sparkles, Tags, Youtube } from "lucide-react";
 import { useAppStore } from "../store";
 import { playTrack } from "../lib/player";
 import type { Track } from "../types";
@@ -39,6 +39,7 @@ export function TrackList() {
     setSelectedTrackIds,
     setShowTagEditor,
     addTracksToPlaylist,
+    setShowLinkDialog,
   } = useAppStore();
 
   const sectionName = useMemo(() => {
@@ -150,6 +151,15 @@ export function TrackList() {
               )}
             </>
           )}
+          <button
+            onClick={() => setShowLinkDialog(true)}
+            aria-label="Add from a link"
+            title="Add from a link"
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2.5 text-xs text-muted-foreground transition hover:text-foreground"
+          >
+            <Youtube className="h-3.5 w-3.5" />
+            Link
+          </button>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -212,6 +222,12 @@ export function TrackList() {
                   className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition hover:bg-surface-hover"
                 >
                   <Sparkles className="h-4 w-4" /> New Songs
+                </button>
+                <button
+                  onClick={() => setShowLinkDialog(true)}
+                  className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition hover:bg-surface-hover"
+                >
+                  <Youtube className="h-4 w-4" /> Add from link
                 </button>
               </div>
             )}

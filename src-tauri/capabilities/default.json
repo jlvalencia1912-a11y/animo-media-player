@@ -7,6 +7,14 @@
     "core:default",
     "dialog:default",
     "fs:default",
-    "core:webview:allow-create-webview-window"
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:window:allow-start-dragging",
+    "core:event:default",
+    "core:event:allow-emit-to"
   ]
 }

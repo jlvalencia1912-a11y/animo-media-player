@@ -11,6 +11,7 @@ import { NewSongsDialog } from "./components/NewSongsDialog";
 import { EqualizerPanel } from "./components/EqualizerPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { TagEditorDialog } from "./components/TagEditorDialog";
+import { AddFromLinkDialog } from "./components/AddFromLinkDialog";
 import { useAppStore } from "./store";
 import { play, pause, seek } from "./lib/player";
 import { startBridge } from "./lib/bridge";
@@ -150,6 +151,7 @@ export function App() {
       <EqualizerPanel />
       <HistoryPanel />
       <TagEditorDialog />
+      <AddFromLinkDialog />
     </div>
   );
 }

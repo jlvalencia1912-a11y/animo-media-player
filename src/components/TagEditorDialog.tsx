@@ -84,7 +84,7 @@ export function TagEditorDialog() {
       // Re-read metadata for files that succeeded so the library shows new tags
       const okPaths = res.filter((r) => r.ok).map((r) => r.path);
       if (okPaths.length) {
-        const fresh = await scanFiles(okPaths);
+        const { files: fresh } = await scanFiles(okPaths);
         setTracks(
           useAppStore.getState().tracks.map((t) => {
             const f = fresh.find((x) => x.path === t.path);
