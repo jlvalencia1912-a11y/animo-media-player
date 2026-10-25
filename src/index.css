@@ -27,6 +27,7 @@ body,
   color: var(--color-foreground);
   font-family: var(--font-body);
   overflow: hidden;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -55,4 +56,15 @@ body,
 .glass {
   background: rgba(18, 18, 28, 0.82);
   backdrop-filter: blur(16px);
+}
+
+/* While a pointer-based track drag is in progress */
+body.track-dragging {
+  cursor: grabbing;
+  -webkit-user-select: none;
+  user-select: none;
+}
+body.track-dragging iframe,
+body.track-dragging video {
+  pointer-events: none;
 }

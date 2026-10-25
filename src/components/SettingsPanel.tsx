@@ -8,11 +8,14 @@ import {
   AlertTriangle,
   MonitorSpeaker,
   Mic,
+  Circle,
+  Square,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { Modal } from "./Modal";
 import { scanLibrary } from "../lib/library";
 import { setOutputDevice, setMicMonitoring, getAudioElement } from "../lib/player";
+import { startRecording, stopRecording } from "../lib/recorder";
 
 export function SettingsPanel() {
   const {
@@ -25,6 +28,7 @@ export function SettingsPanel() {
     settings,
     updateSettings,
     tracks,
+    recording,
   } = useAppStore();
 
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
@@ -34,6 +38,12 @@ export function SettingsPanel() {
 
   const refreshDevices = async () => {
     try {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        setDeviceNote(
+          "Audio device access is not available in this window. Mic features require the packaged app with mic permission.",
+        );
+        return;
+      }
       // Request mic permission once so labels are available
       const stream = await navigator.mediaDevices
         .getUserMedia({ audio: true })
@@ -76,6 +86,28 @@ export function SettingsPanel() {
   const rescanAll = () => {
     if (monitoredFolders.length) {
       scanLibrary(monitoredFolders.map((f) => f.path));
+    }
+  };
+
+  const toggleRecording = async () => {
+    const s = useAppStore.getState();
+    try {
+      if (recording) {
+        await stopRecording();
+      } else {
+        await startRecording(settings.micDeviceId);
+      }
+    } catch (e) {
+      s.setPlaybackError(
+        `Recording failed: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  };
+
+  const pickRecordingDir = async () => {
+    const picked = await open({ directory: true, multiple: false });
+    if (picked && typeof picked === "string") {
+      updateSettings({ recordingDir: picked });
     }
   };
 
@@ -135,6 +167,25 @@ export function SettingsPanel() {
           )}
         </section>
 
+        {/* Appearance */}
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Appearance</h3>
+          <label className="flex cursor-pointer items-center gap-3 rounded-lg bg-surface-elevated px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={settings.showCovers}
+              onChange={(e) => updateSettings({ showCovers: e.target.checked })}
+              className="h-4 w-4 accent-accent"
+            />
+            <div className="text-sm">
+              <div className="text-foreground">Show album artwork</div>
+              <div className="text-xs text-muted-foreground">
+                Display small cover thumbnails next to tracks in the list.
+              </div>
+            </div>
+          </label>
+        </section>
+
         {/* Tray behavior */}
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Window & tray</h3>
@@ -191,11 +242,31 @@ export function SettingsPanel() {
           </div>
         </section>
 
-        {/* Microphone input */}
+        {/* Microphone */}
         <section>
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Mic className="h-4 w-4 text-accent" /> Microphone input (monitoring)
+            <Mic className="h-4 w-4 text-accent" /> Microphone
           </h3>
+          <select
+            value={settings.micDeviceId}
+            onChange={(e) => {
+              updateSettings({ micDeviceId: e.target.value });
+              if (settings.micMonitoring) {
+                setMicMonitoring(true, e.target.value);
+              }
+            }}
+            aria-label="Microphone input device"
+            className="mb-2 w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-foreground focus:border-accent focus:outline-none"
+          >
+            <option value="default" className="bg-surface-elevated">
+              System default input
+            </option>
+            {inputs.map((d) => (
+              <option key={d.deviceId} value={d.deviceId} className="bg-surface-elevated">
+                {d.label || `Input ${d.deviceId.slice(0, 8)}`}
+              </option>
+            ))}
+          </select>
           <label className="mb-2 flex cursor-pointer items-center gap-3 rounded-lg bg-surface-elevated px-3 py-2.5">
             <input
               type="checkbox"
@@ -207,33 +278,51 @@ export function SettingsPanel() {
               className="h-4 w-4 accent-accent"
             />
             <div className="text-sm">
-              <div className="text-foreground">Monitor microphone through output</div>
+              <div className="text-foreground">Monitor microphone through speakers</div>
               <div className="text-xs text-muted-foreground">
                 Monitoring only — the mic is heard through your speakers. It is not
                 recorded. Lower volume if you hear feedback.
               </div>
             </div>
           </label>
-          {settings.micMonitoring && (
-            <select
-              value={settings.micDeviceId}
-              onChange={(e) => {
-                updateSettings({ micDeviceId: e.target.value });
-                setMicMonitoring(true, e.target.value);
-              }}
-              aria-label="Input device"
-              className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 text-sm text-foreground focus:border-accent focus:outline-none"
+          <div className="flex items-center gap-3 rounded-lg bg-surface-elevated px-3 py-2.5">
+            <button
+              onClick={toggleRecording}
+              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                recording
+                  ? "bg-danger/15 text-danger hover:bg-danger/25"
+                  : "bg-accent text-accent-foreground hover:bg-accent-hover"
+              }`}
             >
-              <option value="default" className="bg-surface-elevated">
-                System default input
-              </option>
-              {inputs.map((d) => (
-                <option key={d.deviceId} value={d.deviceId} className="bg-surface-elevated">
-                  {d.label || `Input ${d.deviceId.slice(0, 8)}`}
-                </option>
-              ))}
-            </select>
-          )}
+              {recording ? (
+                <Square className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <Circle className="h-3.5 w-3.5 fill-current" />
+              )}
+              {recording ? "Stop recording" : "Start recording"}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Saved to your recordings folder and added to your library under
+              Recordings.
+            </span>
+          </div>
+          <div className="mt-2 flex items-center gap-3 rounded-lg bg-surface-elevated px-3 py-2.5">
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="text-foreground">Recordings folder</div>
+              <div
+                className="truncate text-xs text-muted-foreground"
+                title={settings.recordingDir || undefined}
+              >
+                {settings.recordingDir || "~/Desktop/Animo Recordings (default)"}
+              </div>
+            </div>
+            <button
+              onClick={pickRecordingDir}
+              className="shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:text-foreground"
+            >
+              Choose…
+            </button>
+          </div>
         </section>
 
         <p className="text-xs text-muted-foreground/70">

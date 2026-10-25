@@ -4,7 +4,8 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, ItemValue, TagExt, TagItem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::Path;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -12,6 +13,7 @@ use tauri::{Emitter, Manager};
 use walkdir::WalkDir;
 
 const AUDIO_EXTENSIONS: [&str; 5] = ["mp3", "flac", "wav", "aac", "m4a"];
+const VIDEO_EXTENSIONS: [&str; 4] = ["mp4", "mov", "m4v", "webm"];
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -44,10 +46,13 @@ struct ScanProgress {
     current: String,
 }
 
-fn is_audio(path: &Path) -> bool {
+fn is_media(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| AUDIO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        .map(|e| {
+            let e = e.to_ascii_lowercase();
+            AUDIO_EXTENSIONS.contains(&e.as_str()) || VIDEO_EXTENSIONS.contains(&e.as_str())
+        })
         .unwrap_or(false)
 }
 
@@ -133,7 +138,7 @@ fn scan_folders(app: tauri::AppHandle, folders: Vec<String>) -> ScanResult {
             .filter_map(|e| e.ok())
         {
             let p = entry.path();
-            if !p.is_file() || !is_audio(p) {
+            if !p.is_file() || !is_media(p) {
                 continue;
             }
             let key = p.to_string_lossy().to_lowercase();
@@ -311,6 +316,161 @@ fn file_exists(path: String) -> bool {
     Path::new(&path).is_file()
 }
 
+
+
+/// Save a mic recording (raw bytes from the webview's MediaRecorder) into
+/// the chosen folder — or ~/Desktop/Animo Recordings/ when none is set.
+/// Returns the absolute path so the frontend can scan it into the library.
+#[tauri::command]
+fn save_recording(
+    app: tauri::AppHandle,
+    data: Vec<u8>,
+    file_name: String,
+    dir: Option<String>,
+) -> Result<String, String> {
+    let dir = match dir {
+        Some(d) if !d.trim().is_empty() => std::path::PathBuf::from(d),
+        _ => app
+            .path()
+            .desktop_dir()
+            .map_err(|e| e.to_string())?
+            .join("Animo Recordings"),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let safe = file_name.replace(['/', '\\'], "-");
+    let path = dir.join(safe);
+    std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Extract a percentage token ("45.2%") from a yt-dlp progress line.
+fn parse_progress_percent(line: &str) -> Option<f64> {
+    if !line.starts_with("[download]") {
+        return None;
+    }
+    for tok in line.split_whitespace() {
+        if let Some(num) = tok.strip_suffix('%') {
+            if let Ok(p) = num.parse::<f64>() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Download a YouTube video via the bundled yt-dlp binary into
+/// ~/Desktop/Animo Downloads/. `format` is a yt-dlp format selector chosen
+/// by the UI (single muxed files only — no ffmpeg merge needed). Streams
+/// progress to the frontend over `amp:dl-progress`. Returns the file path.
+#[tauri::command]
+fn download_youtube(
+    app: tauri::AppHandle,
+    url: String,
+    format: String,
+) -> Result<String, String> {
+    // Resolve the yt-dlp binary: dev (source tree) -> bundled resource -> PATH
+    let exe = std::env::consts::EXE_SUFFIX;
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("binaries/yt-dlp{exe}"));
+    let res_path = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join(format!("binaries/yt-dlp{exe}")));
+    let bin = if dev_path.is_file() {
+        dev_path
+    } else if let Some(p) = res_path.filter(|p| p.is_file()) {
+        p
+    } else {
+        PathBuf::from(format!("yt-dlp{exe}"))
+    };
+
+    let out_dir = app
+        .path()
+        .desktop_dir()
+        .map_err(|e| e.to_string())?
+        .join("Animo Downloads");
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    // GUI apps get a minimal PATH — append common locations so yt-dlp can
+    // find node (its JS runtime for YouTube extraction) in the bundled app too.
+    let mut path_env = std::env::var("PATH").unwrap_or_default();
+    for extra in ["/usr/local/bin", "/opt/homebrew/bin"] {
+        if !path_env.split(':').any(|p| p == extra) {
+            path_env.push(':');
+            path_env.push_str(extra);
+        }
+    }
+
+    // ffmpeg sits next to yt-dlp in binaries/ — needed to merge separate
+    // video+audio streams into a single mp4.
+    let ffmpeg_dir = bin.parent().unwrap_or(Path::new(".")).to_path_buf();
+
+    let mut child = std::process::Command::new(&bin)
+        .env("PATH", path_env)
+        .arg("--no-playlist")
+        .arg("--js-runtimes")
+        .arg("node")
+        .arg("--newline")
+        .arg("--ffmpeg-location")
+        .arg(&ffmpeg_dir)
+        .arg("--merge-output-format")
+        .arg("mp4")
+        .arg("-f")
+        .arg(&format)
+        .arg("-o")
+        .arg(out_dir.join("%(title)s.%(ext)s").to_string_lossy().to_string())
+        .arg("--print")
+        .arg("after_move:filepath")
+        .arg(&url)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not run yt-dlp: {e}"))?;
+
+    // Drain stderr on a thread so a full pipe never deadlocks the download.
+    // yt-dlp also writes its progress bar to stderr — emit percent events.
+    let stderr = child.stderr.take().unwrap();
+    let app2 = app.clone();
+    let err_handle = std::thread::spawn(move || {
+        let mut s = String::new();
+        for line in BufReader::new(stderr).lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            if let Some(p) = parse_progress_percent(&line) {
+                let _ = app2.emit("amp:dl-progress", p);
+            }
+            s.push_str(&line);
+            s.push('\n');
+        }
+        s
+    });
+
+    // stdout: progress lines during download, final filepath last.
+    let stdout = child.stdout.take().unwrap();
+    let mut lines: Vec<String> = Vec::new();
+    for line in BufReader::new(stdout).lines() {
+        let line = line.unwrap_or_default();
+        if let Some(p) = parse_progress_percent(&line) {
+            let _ = app.emit("amp:dl-progress", p);
+        }
+        lines.push(line);
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let stderr_str = err_handle.join().unwrap_or_default();
+    if !status.success() {
+        return Err(format!("yt-dlp failed: {}", stderr_str.trim()));
+    }
+    lines
+        .iter()
+        .rev()
+        .map(|l| l.trim().to_string())
+        .find(|l| Path::new(l).is_file())
+        .ok_or_else(|| "yt-dlp finished but no file path was returned".to_string())
+}
+
 struct CloseToTray(std::sync::Mutex<bool>);
 
 #[tauri::command]
@@ -332,6 +492,8 @@ pub fn run() {
             read_cover,
             write_tags,
             file_exists,
+            save_recording,
+            download_youtube,
             set_close_to_tray
         ])
         .setup(|app| {

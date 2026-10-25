@@ -14,7 +14,8 @@ export interface Track {
   addedAt: number;
   playCount: number;
   lastPlayedAt: number | null;
-  sectionId: string;
+  /** null = unsectioned: only visible in library-wide views */
+  sectionId: string | null;
   missing?: boolean;
 }
 
@@ -46,6 +47,8 @@ export interface MonitoredFolder {
 
 export const DEFAULT_SECTIONS: Section[] = [
   { id: "new-songs", name: "New Songs", icon: "Sparkles", parentId: null },
+  { id: "videos", name: "Videos", icon: "Clapperboard", parentId: null },
+  { id: "recordings", name: "Recordings", icon: "AudioLines", parentId: null },
   { id: "appendix", name: "Appendix", icon: "BookOpen", parentId: null },
   { id: "silent-prayer", name: "Silent Prayer", icon: "Moon", parentId: null },
   { id: "sabbath", name: "Sabbath", icon: "Sunrise", parentId: null },
@@ -58,3 +61,22 @@ export const DEFAULT_SECTIONS: Section[] = [
 ];
 
 export const AUDIO_EXTENSIONS = ["mp3", "flac", "wav", "aac", "m4a"];
+export const VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "webm"];
+
+const ext = (p: string) => p.split(".").pop()?.toLowerCase() ?? "";
+export const isAudioPath = (p: string) => AUDIO_EXTENSIONS.includes(ext(p));
+export const isVideoPath = (p: string) => VIDEO_EXTENSIONS.includes(ext(p));
+export const isMediaPath = (p: string) => isAudioPath(p) || isVideoPath(p);
+
+/** A track counts as a mic recording when it sits in the Recordings section
+ *  OR lives under the recordings export folder (chosen or default). */
+export const isRecordingTrack = (
+  t: { path: string; sectionId: string | null },
+  recordingDir: string,
+) => {
+  if (t.sectionId === "recordings") return true;
+  const p = t.path.replace(/\\/g, "/");
+  if (p.includes("/Animo Recordings/")) return true;
+  const dir = recordingDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  return dir !== "" && p.startsWith(dir + "/");
+};

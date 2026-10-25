@@ -1,7 +1,10 @@
-import { useState } from "react";
-import { Youtube, Link2, FolderOpen, AlertTriangle, Info } from "lucide-react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { Youtube, Link2, FolderOpen, AlertTriangle, Info, Loader2, Download } from "lucide-react";
 import { useAppStore } from "../store";
 import { Modal } from "./Modal";
+import { scanFiles, addFilesAsTracks } from "../lib/library";
 
 type Status =
   | { kind: "idle" }
@@ -12,6 +15,25 @@ type Status =
 
 const YT_RE =
   /^(https?:\/\/)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i;
+
+/** Resolution choices mapped to yt-dlp format selectors. Prefers separate
+ *  mp4 video + m4a audio streams merged by the bundled ffmpeg — muxed
+ *  progressive MP4 only exists at 360p on YouTube. */
+const RESOLUTIONS: { label: string; format: string }[] = [
+  { label: "Best available", format: "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b" },
+  {
+    label: "1080p",
+    format: "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/b",
+  },
+  {
+    label: "720p",
+    format: "bv*[ext=mp4][height<=720]+ba[ext=m4a]/bv*[height<=720]+ba/b",
+  },
+  {
+    label: "480p",
+    format: "bv*[ext=mp4][height<=480]+ba[ext=m4a]/bv*[height<=480]+ba/b",
+  },
+];
 const AUDIO_EXT_RE = /\.(mp3|flac|wav|aac|m4a)([?#].*)?$/i;
 
 function classify(url: string): Status {
@@ -33,12 +55,55 @@ export function AddFromLinkDialog() {
   const { showLinkDialog, setShowLinkDialog, setShowNewSongs } = useAppStore();
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [downloading, setDownloading] = useState(false);
+  const [dlError, setDlError] = useState<string | null>(null);
+  const [dlPercent, setDlPercent] = useState<number | null>(null);
+  const [resIdx, setResIdx] = useState(0);
+
+  useEffect(() => {
+    const un = listen<number>("amp:dl-progress", (e) =>
+      setDlPercent(e.payload),
+    );
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   const check = () => setStatus(classify(url));
   const close = () => {
     setUrl("");
     setStatus({ kind: "idle" });
+    setDlError(null);
     setShowLinkDialog(false);
+  };
+
+  const downloadVideo = async () => {
+    setDownloading(true);
+    setDlError(null);
+    setDlPercent(null);
+    try {
+      const path = await invoke<string>("download_youtube", {
+        url: url.trim(),
+        format: RESOLUTIONS[resIdx].format,
+      });
+      const result = await scanFiles([path]);
+      if (!result.files.length) {
+        setDlError("Downloaded, but the file could not be read.");
+        return;
+      }
+      await addFilesAsTracks(result.files, "videos");
+      const s = useAppStore.getState();
+      s.moveTracksToSection(
+        result.files.map((f) => f.path),
+        "videos",
+      );
+      s.setView({ kind: "videos" });
+      close();
+    } catch (e) {
+      setDlError(String(e));
+    } finally {
+      setDownloading(false);
+    }
   };
   const addLocalInstead = () => {
     close();
@@ -87,31 +152,65 @@ export function AddFromLinkDialog() {
         )}
 
         {status.kind === "youtube" && (
-          <div
-            role="alert"
-            className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm"
-          >
-            <Youtube className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
-            <div className="text-foreground/90">
-              <p className="font-medium text-foreground">
-                YouTube links can't be imported
-              </p>
+          <div className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/10 p-3 text-sm">
+            <Youtube className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+            <div className="flex-1 text-foreground/90">
+              <p className="font-medium text-foreground">YouTube video</p>
               <p className="mt-1 text-muted-foreground">
-                YouTube's Terms of Service don't allow extracting or
-                downloading audio from videos unless YouTube or the rights
-                holder provides a download option, so Animo doesn't download
-                from YouTube links.
+                Downloads the video as an MP4 and adds it to your Videos
+                library. Files are saved to{" "}
+                <strong>~/Desktop/Animo Downloads</strong>.
               </p>
-              <p className="mt-1 text-muted-foreground">
-                Legal options: the{" "}
-                <strong>YouTube Audio Library</strong> (free MP3 downloads in
-                YouTube Studio), a download link provided by the uploader, or
-                purchasing the track.
+              <p className="mt-1 text-xs text-muted-foreground/70">
+                Only download videos you have the right to use.
               </p>
-              <p className="mt-1 text-muted-foreground">
-                If you own or have lawfully obtained the audio file, add it
-                with <strong>Add a local file</strong> below.
-              </p>
+              <div className="mt-2.5 flex items-center gap-2">
+                <select
+                  value={resIdx}
+                  onChange={(e) => setResIdx(Number(e.target.value))}
+                  disabled={downloading}
+                  aria-label="Download resolution"
+                  className="h-9 rounded-lg border border-border bg-surface-elevated px-2.5 text-sm text-foreground focus:border-accent focus:outline-none"
+                >
+                  {RESOLUTIONS.map((r, i) => (
+                    <option key={r.label} value={i} className="bg-surface-elevated">
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={downloadVideo}
+                  disabled={downloading}
+                  className="flex h-9 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground transition hover:bg-accent-hover disabled:opacity-50"
+                >
+                  {downloading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {dlPercent != null
+                        ? `Downloading… ${Math.floor(dlPercent)}%`
+                        : "Preparing…"}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4" />
+                      Download video
+                    </>
+                  )}
+                </button>
+              </div>
+              {downloading && (
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
+                  <div
+                    className={`h-full bg-accent transition-all ${dlPercent == null ? "animate-pulse" : ""}`}
+                    style={{ width: `${Math.max(dlPercent ?? 10, 5)}%` }}
+                  />
+                </div>
+              )}
+              {dlError && (
+                <p role="alert" className="mt-2 whitespace-pre-line text-xs text-warning">
+                  {dlError}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -142,7 +241,8 @@ export function AddFromLinkDialog() {
 
         <div className="flex items-center justify-between border-t border-border pt-4">
           <p className="text-xs text-muted-foreground">
-            Supported: local MP3, FLAC, WAV, AAC, M4A files.
+            Supported: local MP3, FLAC, WAV, AAC, M4A, MP4/MOV/M4V/WEBM files ·
+            YouTube downloads as MP4.
           </p>
           <button
             onClick={addLocalInstead}

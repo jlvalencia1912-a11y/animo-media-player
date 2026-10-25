@@ -4,7 +4,7 @@ import { FilePlus2, Loader2 } from "lucide-react";
 import { useAppStore } from "../store";
 import { Modal } from "./Modal";
 import { scanFiles, addFilesAsTracks, type ScannedFile } from "../lib/library";
-import { AUDIO_EXTENSIONS } from "../types";
+import { AUDIO_EXTENSIONS, VIDEO_EXTENSIONS } from "../types";
 
 interface Row {
   file: ScannedFile;
@@ -25,7 +25,12 @@ export function NewSongsDialog() {
     try {
       picked = await open({
         multiple: true,
-        filters: [{ name: "Audio", extensions: [...AUDIO_EXTENSIONS] }],
+        filters: [
+          {
+            name: "Audio & Video",
+            extensions: [...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS],
+          },
+        ],
       });
     } catch (e) {
       setError(`Could not open the file picker: ${String(e)}`);
@@ -147,9 +152,10 @@ export function NewSongsDialog() {
 
         {rows.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Select MP3, FLAC, WAV, AAC, or M4A files. Only the files you pick
-            are read — nothing else is rescanned. You can adjust each track
-            number and title before adding them to the section.
+            Select MP3, FLAC, WAV, AAC, M4A, MP4, MOV, M4V, or WEBM files.
+            Only the files you pick are read — nothing else is rescanned.
+            You can adjust each track number and title before adding them
+            to the section.
           </p>
         ) : (
           <>

@@ -15,7 +15,14 @@ export type ViewMode =
   | { kind: "playlist"; id: string }
   | { kind: "recent-added" }
   | { kind: "recent-played" }
+  | { kind: "videos" }
   | { kind: "all" };
+
+/** Where a drag is hovering. "view" resolves to whatever the track list shows. */
+export type DropTarget =
+  | { kind: "section"; id: string }
+  | { kind: "playlist"; id: string }
+  | { kind: "view" };
 
 interface AppState {
   // Library
@@ -41,6 +48,16 @@ interface AppState {
   playbackError: string | null;
   selectedTrackIds: string[];
 
+  // Drag & drop (transient — which drop zone is hovered, and what's dragged)
+  dropTarget: DropTarget | null;
+  trackDrag: { ids: string[]; x: number; y: number } | null;
+
+  // Video pop-up window owns playback when open (transient)
+  videoPopupOpen: boolean;
+
+  // Mic recording in progress (transient)
+  recording: { startedAt: number; mime: string } | null;
+
   // UI
   view: ViewMode;
   search: string;
@@ -64,6 +81,9 @@ interface AppState {
     outputDeviceId: string;
     micMonitoring: boolean;
     micDeviceId: string;
+    showCovers: boolean;
+    /** Export folder for mic recordings; empty = ~/Desktop/Animo Recordings */
+    recordingDir: string;
   };
 
   // Actions
@@ -94,6 +114,14 @@ interface AppState {
   createPlaylist: (name: string) => void;
   addTracksToPlaylist: (playlistId: string, trackIds: string[]) => void;
   deletePlaylist: (playlistId: string) => void;
+  moveTracksToSection: (trackIds: string[], sectionId: string) => void;
+  unassignTracksFromSection: (trackIds: string[]) => void;
+  removeTracksFromPlaylist: (playlistId: string, trackIds: string[]) => void;
+  removeTracks: (trackIds: string[]) => void;
+  setDropTarget: (t: DropTarget | null) => void;
+  setTrackDrag: (d: AppState["trackDrag"]) => void;
+  setVideoPopupOpen: (b: boolean) => void;
+  setRecording: (r: AppState["recording"]) => void;
   setHistory: (h: HistoryEntry[]) => void;
   addHistoryEntry: (e: HistoryEntry) => void;
   setSections: (s: Section[]) => void;
@@ -164,6 +192,10 @@ export const useAppStore = create<AppState>()(
 
       playbackError: null,
       selectedTrackIds: [],
+      dropTarget: null,
+      trackDrag: null,
+      videoPopupOpen: false,
+      recording: null,
 
       view: { kind: "all" },
       search: "",
@@ -186,6 +218,8 @@ export const useAppStore = create<AppState>()(
         outputDeviceId: "default",
         micMonitoring: false,
         micDeviceId: "default",
+        showCovers: true,
+        recordingDir: "",
       },
 
       setTracks: (tracks) => set({ tracks }),
@@ -268,6 +302,53 @@ export const useAppStore = create<AppState>()(
               : v,
         });
       },
+      moveTracksToSection: (trackIds, sectionId) =>
+        set({
+          tracks: get().tracks.map((t) =>
+            trackIds.includes(t.id) ? { ...t, sectionId } : t,
+          ),
+        }),
+      // Remove tracks from their section but keep them in the library.
+      unassignTracksFromSection: (trackIds) =>
+        set({
+          tracks: get().tracks.map((t) =>
+            trackIds.includes(t.id) ? { ...t, sectionId: null } : t,
+          ),
+          selectedTrackIds: [],
+        }),
+      removeTracksFromPlaylist: (playlistId, trackIds) =>
+        set({
+          playlists: get().playlists.map((p) =>
+            p.id === playlistId
+              ? {
+                  ...p,
+                  trackIds: p.trackIds.filter((id) => !trackIds.includes(id)),
+                }
+              : p,
+          ),
+        }),
+      // Removes tracks from the library only — files on disk are untouched.
+      removeTracks: (trackIds) => {
+        const s = get();
+        const removedCurrent =
+          s.currentTrackId !== null && trackIds.includes(s.currentTrackId);
+        set({
+          tracks: s.tracks.filter((t) => !trackIds.includes(t.id)),
+          playlists: s.playlists.map((p) => ({
+            ...p,
+            trackIds: p.trackIds.filter((id) => !trackIds.includes(id)),
+          })),
+          queue: s.queue.filter((id) => !trackIds.includes(id)),
+          selectedTrackIds: [],
+          ...(removedCurrent
+            ? { currentTrackId: null, position: 0, isPlaying: false }
+            : {}),
+        });
+      },
+      setDropTarget: (dropTarget) => set({ dropTarget }),
+      setTrackDrag: (trackDrag) => set({ trackDrag }),
+      setVideoPopupOpen: (videoPopupOpen) => set({ videoPopupOpen }),
+      setRecording: (recording) => set({ recording }),
       setHistory: (history) => set({ history }),
       addHistoryEntry: (e) => set({ history: [e, ...get().history].slice(0, 500) }),
       setSections: (sections) => set({ sections }),
@@ -307,6 +388,22 @@ export const useAppStore = create<AppState>()(
         repeat: s.repeat,
         shuffle: s.shuffle,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AppState>;
+        // Union persisted sections with defaults so newly-added built-in
+        // sections (e.g. Videos) appear for existing users.
+        const sections = [...(p.sections ?? current.sections)];
+        for (const d of DEFAULT_SECTIONS) {
+          if (!sections.some((s) => s.id === d.id)) sections.push(d);
+        }
+        return {
+          ...current,
+          ...p,
+          sections,
+          // Fill new settings keys with defaults for existing saved settings
+          settings: { ...current.settings, ...p.settings },
+        };
+      },
     },
   ),
 );

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
-import type { Track } from "../types";
+import { isVideoPath, type Track } from "../types";
 
 export interface ScannedFile {
   path: string;
@@ -39,8 +39,9 @@ function toTrack(f: ScannedFile, prev: Track | undefined): Track {
     addedAt: prev?.addedAt ?? Date.now(),
     playCount: prev?.playCount ?? 0,
     lastPlayedAt: prev?.lastPlayedAt ?? null,
-    // preserve user-assigned section; new files land in New Songs
-    sectionId: prev?.sectionId ?? "new-songs",
+    // preserve user-assigned section (including "unsectioned"); new files
+    // land in New Songs / Videos
+    sectionId: prev ? prev.sectionId : isVideoPath(f.path) ? "videos" : "new-songs",
     missing: false,
   };
 }
@@ -90,6 +91,12 @@ export async function scanLibrary(folders: string[]): Promise<ScanResult> {
  *  Reads ONLY the given files — never triggers a library rescan. */
 export async function scanFiles(paths: string[]): Promise<ScanResult> {
   return invoke<ScanResult>("scan_files", { paths });
+}
+
+/** Recursive scan of specific folders WITHOUT merging into the library —
+ *  used for folders dropped onto the app (caller decides the destination). */
+export async function scanFoldersRaw(folders: string[]): Promise<ScanResult> {
+  return invoke<ScanResult>("scan_folders", { folders });
 }
 
 export interface AddResult {

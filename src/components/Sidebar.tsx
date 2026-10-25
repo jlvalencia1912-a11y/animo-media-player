@@ -13,13 +13,17 @@ import {
   Users,
   Heart,
   Mic,
+  Clapperboard,
+  AudioLines,
+  Video,
+  Volume2,
   FolderOpen,
   Settings,
   Plus,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { useAppStore, type ViewMode } from "../store";
+import { useAppStore, type DropTarget, type ViewMode } from "../store";
 import type { Section } from "../types";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -32,6 +36,8 @@ const ICONS: Record<string, LucideIcon> = {
   Users,
   Heart,
   Mic,
+  Clapperboard,
+  AudioLines,
 };
 
 interface ItemProps {
@@ -40,23 +46,35 @@ interface ItemProps {
   active: boolean;
   onClick: () => void;
   indent?: boolean;
+  highlighted?: boolean;
+  playing?: boolean;
+  dropProps?: Record<string, string>;
 }
 
-function NavItem({ icon: Icon, label, active, onClick, indent }: ItemProps) {
+function NavItem({ icon: Icon, label, active, onClick, indent, highlighted, playing, dropProps }: ItemProps) {
   return (
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      {...dropProps}
       className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${
         indent ? "pl-10" : ""
       } ${
-        active
-          ? "bg-surface-elevated font-medium text-foreground"
-          : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+        highlighted
+          ? "bg-accent/15 text-foreground ring-1 ring-inset ring-accent"
+          : active
+            ? "bg-surface-elevated font-medium text-foreground"
+            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground"
       }`}
     >
-      <Icon className={`h-4 w-4 shrink-0 ${active ? "text-accent" : ""}`} />
+      <Icon className={`h-4 w-4 shrink-0 ${active || highlighted ? "text-accent" : ""}`} />
       <span className="truncate">{label}</span>
+      {playing && (
+        <Volume2
+          aria-label="Now playing in this section"
+          className="ml-auto h-3.5 w-3.5 shrink-0 animate-pulse text-accent"
+        />
+      )}
     </button>
   );
 }
@@ -72,6 +90,9 @@ export function Sidebar() {
     setShowHistory,
     createPlaylist,
     deletePlaylist,
+    dropTarget,
+    tracks,
+    currentTrackId,
   } = useAppStore();
   const [newPlaylist, setNewPlaylist] = useState<string | null>(null);
 
@@ -82,6 +103,23 @@ export function Sidebar() {
   const topLevel = sections.filter((s) => !s.parentId);
   const childrenOf = (id: string) => sections.filter((s) => s.parentId === id);
 
+  // Section the currently-playing track lives in
+  const playingSectionId = tracks.find((t) => t.id === currentTrackId)?.sectionId ?? null;
+
+  // Drop targets: the data-drop-* attrs are hit-tested by both the
+  // pointer-based track drag and the OS file-drop listener (see lib/dnd.ts).
+  const dropPropsFor = (
+    target: Exclude<DropTarget, { kind: "view" }>,
+  ): Record<string, string> =>
+    target.kind === "section"
+      ? { "data-drop-section": target.id }
+      : { "data-drop-playlist": target.id };
+
+  const highlighted = (target: Exclude<DropTarget, { kind: "view" }>) =>
+    dropTarget?.kind === target.kind &&
+    "id" in dropTarget &&
+    dropTarget.id === target.id;
+
   return (
     <nav
       aria-label="Library navigation"
@@ -91,6 +129,7 @@ export function Sidebar() {
         Library
       </div>
       <NavItem icon={Library} label="All Songs" active={view.kind === "all"} onClick={() => setView({ kind: "all" })} />
+      <NavItem icon={Video} label="All Videos" active={view.kind === "videos"} onClick={() => setView({ kind: "videos" })} />
       <NavItem icon={Clock} label="Recently Added" active={view.kind === "recent-added"} onClick={() => setView({ kind: "recent-added" })} />
       <NavItem icon={History} label="Recently Played" active={view.kind === "recent-played"} onClick={() => setView({ kind: "recent-played" })} />
 
@@ -107,6 +146,7 @@ export function Sidebar() {
       {topLevel.map((section) => {
         const Icon = ICONS[section.icon] ?? ListMusic;
         const kids = childrenOf(section.id);
+        const target = { kind: "section" as const, id: section.id };
         return (
           <div key={section.id}>
             <NavItem
@@ -114,17 +154,26 @@ export function Sidebar() {
               label={section.name}
               active={view.kind === "section" && view.id === section.id}
               onClick={() => setView({ kind: "section", id: section.id })}
+              highlighted={highlighted(target)}
+              playing={section.id === playingSectionId}
+              dropProps={dropPropsFor(target)}
             />
-            {kids.map((kid) => (
-              <NavItem
-                key={kid.id}
-                icon={ICONS[kid.icon] ?? ListMusic}
-                label={kid.name}
-                indent
-                active={view.kind === "section" && view.id === kid.id}
-                onClick={() => setView({ kind: "section", id: kid.id })}
-              />
-            ))}
+            {kids.map((kid) => {
+              const kidTarget = { kind: "section" as const, id: kid.id };
+              return (
+                <NavItem
+                  key={kid.id}
+                  icon={ICONS[kid.icon] ?? ListMusic}
+                  label={kid.name}
+                  indent
+                  active={view.kind === "section" && view.id === kid.id}
+                  onClick={() => setView({ kind: "section", id: kid.id })}
+                  highlighted={highlighted(kidTarget)}
+                  playing={kid.id === playingSectionId}
+                  dropProps={dropPropsFor(kidTarget)}
+                />
+              );
+            })}
           </div>
         );
       })}
@@ -180,6 +229,8 @@ export function Sidebar() {
               label={p.name}
               active={view.kind === "playlist" && view.id === p.id}
               onClick={() => setView({ kind: "playlist", id: p.id })}
+              highlighted={highlighted({ kind: "playlist", id: p.id })}
+              dropProps={dropPropsFor({ kind: "playlist", id: p.id })}
             />
           </div>
           <button

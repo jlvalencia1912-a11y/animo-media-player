@@ -1,8 +1,10 @@
-import { useMemo } from "react";
-import { Search, ArrowUpDown, Music2, FolderPlus, Sparkles, Tags, Youtube } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store";
-import { playTrack } from "../lib/player";
-import type { Track } from "../types";
+import { playTrack, pause } from "../lib/player";
+import { startTrackDrag } from "../lib/dnd";
+import { getCover, peekCover } from "../lib/cover";
+import { isRecordingTrack, isVideoPath, type Track } from "../types";
 
 function formatTime(sec: number) {
   if (!Number.isFinite(sec) || sec <= 0) return "—";
@@ -18,6 +20,36 @@ const SORT_LABELS: Record<string, string> = {
   addedAt: "Date added",
   trackNumber: "Track #",
 };
+
+function CoverThumb({ track }: { track: Track }) {
+  const [url, setUrl] = useState<string | null | undefined>(() =>
+    peekCover(track.id),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    getCover(track).then((u) => {
+      if (!cancelled) setUrl(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [track.id]);
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt=""
+        className="h-6 w-6 shrink-0 rounded object-cover"
+      />
+    );
+  }
+  const Icon = isVideoPath(track.path) ? Video : Music;
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated">
+      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+    </span>
+  );
+}
 
 export function TrackList() {
   const {
@@ -40,7 +72,17 @@ export function TrackList() {
     setShowTagEditor,
     addTracksToPlaylist,
     setShowLinkDialog,
+    dropTarget,
+    removeTracks,
+    removeTracksFromPlaylist,
+    unassignTracksFromSection,
+    setView,
+    settings,
+    updateSettings,
   } = useAppStore();
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Anchor row index for Shift-click range selection
+  const lastIndexRef = useRef(0);
 
   const sectionName = useMemo(() => {
     if (view.kind === "section") {
@@ -51,19 +93,37 @@ export function TrackList() {
     }
     if (view.kind === "recent-added") return "Recently Added";
     if (view.kind === "recent-played") return "Recently Played";
+    if (view.kind === "videos") return "Videos";
     return "All Songs";
   }, [view, sections, playlists]);
 
   const visible = useMemo(() => {
     let list = tracks;
     if (view.kind === "section") {
-      const section = sections.find((s) => s.id === view.id);
       const childIds = sections
         .filter((s) => s.parentId === view.id)
         .map((s) => s.id);
       const ids = new Set([view.id, ...childIds]);
-      list = list.filter((t) => ids.has(t.sectionId));
-      void section;
+      // The Recordings section also catches files under the recordings
+      // folder even if their sectionId got out of sync.
+      list =
+        view.id === "recordings"
+          ? list.filter(
+              (t) =>
+                (t.sectionId !== null && ids.has(t.sectionId)) ||
+                isRecordingTrack(t, settings.recordingDir),
+            )
+          : list.filter(
+              (t) => t.sectionId !== null && ids.has(t.sectionId),
+            );
+    } else if (view.kind === "all") {
+      // Library tabs keep audio and video separated; recordings live only
+      // in the Recordings section
+      list = list.filter(
+        (t) => !isVideoPath(t.path) && !isRecordingTrack(t, settings.recordingDir),
+      );
+    } else if (view.kind === "videos") {
+      list = list.filter((t) => isVideoPath(t.path));
     } else if (view.kind === "playlist") {
       const pl = playlists.find((p) => p.id === view.id);
       const order = new Map((pl?.trackIds ?? []).map((id, i) => [id, i]));
@@ -106,6 +166,50 @@ export function TrackList() {
     playTrack(track);
   };
 
+  const removeSelected = () => {
+    if (view.kind === "playlist") {
+      removeTracksFromPlaylist(view.id, selectedTrackIds);
+      setSelectedTrackIds([]);
+      return;
+    }
+    if (view.kind === "section" && view.id !== "recordings") {
+      // Keep the tracks in the library — just unassign this section.
+      unassignTracksFromSection(selectedTrackIds);
+      return;
+    }
+    if (!confirmingRemove) {
+      setConfirmingRemove(true);
+      setTimeout(() => setConfirmingRemove(false), 3000);
+      return;
+    }
+    setConfirmingRemove(false);
+    pause();
+    removeTracks(selectedTrackIds);
+  };
+
+  // ⌘/Ctrl-click toggles a row; Shift-click selects the range from the
+  // last-clicked row. Dragging a selected row moves the whole selection.
+  const onRowClick = (e: React.MouseEvent, t: Track, i: number) => {
+    if (e.shiftKey) {
+      e.preventDefault();
+      const [a, b] = [lastIndexRef.current, i].sort((x, y) => x - y);
+      setSelectedTrackIds(visible.slice(a, b + 1).map((x) => x.id));
+    } else if (e.metaKey || e.ctrlKey) {
+      toggleTrackSelected(t.id);
+    }
+    lastIndexRef.current = i;
+  };
+
+  const beginDrag = (e: React.PointerEvent, t: Track) => {
+    if (e.button !== 0) return;
+    // Let clicks on interactive elements (checkbox etc.) through untouched
+    if ((e.target as HTMLElement).closest("input, button, select, a")) return;
+    // Prevent WebKit's native drag-select — it highlights text/rows while dragging
+    e.preventDefault();
+    const ids = selectedTrackIds.includes(t.id) ? selectedTrackIds : [t.id];
+    startTrackDrag(ids, e.clientX, e.clientY);
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Toolbar */}
@@ -113,6 +217,34 @@ export function TrackList() {
         <h1 className="font-display text-lg font-semibold text-foreground">
           {sectionName}
         </h1>
+        {(view.kind === "all" || view.kind === "videos") && (
+          <div
+            role="tablist"
+            aria-label="Library media type"
+            className="flex rounded-lg border border-border bg-surface-elevated p-0.5 text-xs"
+          >
+            {(
+              [
+                { kind: "all" as const, label: "Music" },
+                { kind: "videos" as const, label: "Videos" },
+              ]
+            ).map((tab) => (
+              <button
+                key={tab.kind}
+                role="tab"
+                aria-selected={view.kind === tab.kind}
+                onClick={() => setView({ kind: tab.kind })}
+                className={`rounded-md px-3 py-1 transition ${
+                  view.kind === tab.kind
+                    ? "bg-accent font-medium text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="text-xs text-muted-foreground">
           {visible.length} track{visible.length === 1 ? "" : "s"}
         </span>
@@ -125,6 +257,30 @@ export function TrackList() {
               >
                 <Tags className="h-3.5 w-3.5" />
                 Edit tags ({selectedTrackIds.length})
+              </button>
+              <button
+                onClick={removeSelected}
+                className={`flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition ${
+                  confirmingRemove
+                    ? "border-danger bg-danger/15 text-danger"
+                    : "border-border bg-surface-elevated text-muted-foreground hover:text-foreground"
+                }`}
+                title={
+                  view.kind === "playlist"
+                    ? "Remove selected tracks from this playlist"
+                    : view.kind === "section" && view.id !== "recordings"
+                      ? "Remove from this section — stays in your library"
+                      : "Remove selected tracks from the library (files stay on disk)"
+                }
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {view.kind === "playlist"
+                  ? "Remove from playlist"
+                  : view.kind === "section" && view.id !== "recordings"
+                    ? "Remove from section"
+                    : confirmingRemove
+                      ? "Confirm remove?"
+                      : "Remove"}
               </button>
               {playlists.length > 0 && (
                 <select
@@ -160,6 +316,18 @@ export function TrackList() {
             <Youtube className="h-3.5 w-3.5" />
             Link
           </button>
+          <button
+            onClick={() => updateSettings({ showCovers: !settings.showCovers })}
+            aria-label={settings.showCovers ? "Hide album artwork" : "Show album artwork"}
+            title={settings.showCovers ? "Hide album artwork" : "Show album artwork"}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-surface-elevated text-muted-foreground transition hover:text-foreground"
+          >
+            {settings.showCovers ? (
+              <Eye className="h-3.5 w-3.5" />
+            ) : (
+              <EyeOff className="h-3.5 w-3.5" />
+            )}
+          </button>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -194,8 +362,12 @@ export function TrackList() {
         </div>
       </div>
 
-      {/* List */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* List — also a drop zone for OS files (target = current view) */}
+      <div
+        className={`min-h-0 flex-1 overflow-y-auto transition ${
+          dropTarget?.kind === "view" ? "ring-2 ring-inset ring-accent" : ""
+        }`}
+      >
         {visible.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-surface-elevated">
@@ -205,7 +377,7 @@ export function TrackList() {
               <p className="font-medium text-foreground">No music here yet</p>
               <p className="mt-1 max-w-sm text-sm text-muted-foreground">
                 {tracks.length === 0
-                  ? "Add a folder in Settings to scan your music collection, or use New Songs to add tracks manually."
+                  ? "Add a folder in Settings to scan your media collection, use New Songs to add tracks manually, or drag audio/video files here."
                   : "No tracks match this view or search."}
               </p>
             </div>
@@ -236,6 +408,7 @@ export function TrackList() {
           <table className="w-full border-collapse text-sm" role="grid" aria-label="Tracks">
             <thead className="sticky top-0 z-10 bg-surface">
               <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="w-6 px-1 py-2" aria-label="Drag handle column" />
                 <th className="w-8 px-3 py-2">
                   <input
                     type="checkbox"
@@ -259,13 +432,26 @@ export function TrackList() {
                 <tr
                   key={t.id}
                   onDoubleClick={() => startPlayback(t)}
+                  onClick={(e) => onRowClick(e, t, i)}
+                  onPointerDown={(e) => beginDrag(e, t)}
                   aria-selected={t.id === currentTrackId}
-                  className={`cursor-default border-b border-border/40 transition ${
-                    t.id === currentTrackId
-                      ? "bg-accent/10 text-foreground"
-                      : "text-foreground/90 hover:bg-surface-hover"
+                  className={`group cursor-default border-b border-border/40 transition ${
+                    selectedTrackIds.includes(t.id)
+                      ? "bg-accent/15 text-foreground"
+                      : t.id === currentTrackId
+                        ? "bg-accent/10 text-foreground"
+                        : "text-foreground/90 hover:bg-surface-hover"
                   }`}
                 >
+                  <td className="px-1 py-2.5">
+                    <span
+                      aria-label={`Drag ${t.title}`}
+                      title="Drag to a section or playlist — ⌘/⇧-click rows to select several"
+                      className="flex cursor-grab touch-none items-center justify-center text-muted-foreground/40 transition group-hover:text-muted-foreground active:cursor-grabbing"
+                    >
+                      <GripVertical className="h-4 w-4" />
+                    </span>
+                  </td>
                   <td className="px-3 py-2.5">
                     <input
                       type="checkbox"
@@ -278,14 +464,26 @@ export function TrackList() {
                   <td className="px-3 py-2.5 text-right text-xs tabular-nums text-muted-foreground">
                     {t.trackNumber ?? i + 1}
                   </td>
-                  <td className="max-w-0 truncate px-3 py-2.5 font-medium">
-                    {t.missing ? (
-                      <span className="text-warning" title="File not found">
-                        {t.title} ⚠
-                      </span>
-                    ) : (
-                      t.title
-                    )}
+                  <td
+                    className="max-w-0 truncate px-3 py-2.5 font-medium"
+                    title="Drag to a section or playlist"
+                  >
+                    <span className="inline-flex max-w-full cursor-grab touch-none items-center gap-2 active:cursor-grabbing">
+                      {settings.showCovers ? (
+                        <CoverThumb track={t} />
+                      ) : (
+                        isVideoPath(t.path) && (
+                          <Video className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        )
+                      )}
+                      {t.missing ? (
+                        <span className="truncate text-warning" title="File not found">
+                          {t.title} ⚠
+                        </span>
+                      ) : (
+                        <span className="truncate">{t.title}</span>
+                      )}
+                    </span>
                   </td>
                   <td className="max-w-0 truncate px-3 py-2.5 text-muted-foreground">
                     {t.artist || "Unknown artist"}

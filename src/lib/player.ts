@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { emitTo } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
-import type { Track } from "../types";
+import { isVideoPath, type Track } from "../types";
 
 export const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
@@ -13,6 +14,8 @@ let micSource: MediaStreamAudioSourceNode | null = null;
 let micGain: GainNode | null = null;
 let micStream: MediaStream | null = null;
 let listenersBound = false;
+let videoEl: HTMLVideoElement | null = null;
+let videoListenersBound = false;
 
 function getAudio(): HTMLAudioElement {
   if (!audio) {
@@ -63,6 +66,35 @@ export function applyVolumeFromStore() {
   if (masterGain) {
     masterGain.gain.value = muted ? 0 : volume;
   }
+  const v = getVideoEl();
+  if (v) {
+    v.volume = muted ? 0 : volume;
+    v.muted = muted;
+  }
+}
+
+function currentTrack(): Track | undefined {
+  const s = useAppStore.getState();
+  return s.tracks.find((t) => t.id === s.currentTrackId);
+}
+
+/** The element currently owning playback — video for video files. */
+function activeMedia(): HTMLMediaElement | null {
+  const t = currentTrack();
+  if (t && isVideoPath(t.path)) return getVideoEl();
+  return audio;
+}
+
+/** Send a command to the video pop-up window (see lib/videoWindow.ts). */
+function sendVideoCmd(payload: Record<string, unknown>) {
+  emitTo("video", "amp:video-cmd", payload).catch(() => {});
+}
+
+/** True when the current track is video AND the pop-up window owns playback. */
+function videoInPopup(): boolean {
+  const s = useAppStore.getState();
+  const t = s.tracks.find((x) => x.id === s.currentTrackId);
+  return !!t && isVideoPath(t.path) && s.videoPopupOpen;
 }
 
 export async function setOutputDevice(deviceId: string) {
@@ -87,6 +119,15 @@ export async function setOutputDevice(deviceId: string) {
 export async function setMicMonitoring(enabled: boolean, deviceId: string) {
   // Monitoring only — plays the input through the output device. Not a recorder.
   if (!ctx) getAudio();
+  if (enabled && !navigator.mediaDevices?.getUserMedia) {
+    useAppStore
+      .getState()
+      .setPlaybackError(
+        "Microphone capture is not available in this window. It requires the packaged app with mic permission granted.",
+      );
+    useAppStore.getState().updateSettings({ micMonitoring: false });
+    return;
+  }
   if (!enabled) {
     micSource?.disconnect();
     micGain?.disconnect();
@@ -130,20 +171,75 @@ function bindAudioEvents() {
     }
     next();
   });
-  audio.addEventListener("error", () => {
-    const s = store();
-    const t = s.tracks.find((x) => x.id === s.currentTrackId);
-    if (!t) return;
-    s.setPlaybackError(
-      `Could not play "${t.title}". The file may be missing, moved, or in an unsupported format. ` +
-        `Check that ${t.path} exists and is a readable MP3/FLAC/WAV/AAC/M4A file.`,
-    );
-    s.updateTrack(t.id, { missing: true });
-    s.setIsPlaying(false);
-    updateMediaSessionPlayback("paused");
-  });
+  audio.addEventListener("error", handleMediaError);
   audio.addEventListener("playing", () => updateMediaSessionPlayback("playing"));
   audio.addEventListener("pause", () => updateMediaSessionPlayback("paused"));
+}
+
+function handleMediaError(e: Event) {
+  const el = e.currentTarget as HTMLMediaElement;
+  // MEDIA_ERR_ABORTED fires when a new src replaces an in-flight load or a
+  // pause() interrupts one — benign, not a real playback failure.
+  if (!el.src || !el.error || el.error.code === MediaError.MEDIA_ERR_ABORTED) {
+    return;
+  }
+  const s = useAppStore.getState();
+  const t = s.tracks.find((x) => x.id === s.currentTrackId);
+  if (!t) return;
+  s.setPlaybackError(
+    `Could not play "${t.title}". The file may be missing, moved, or in an unsupported format. ` +
+      `Check that ${t.path} exists and is a readable MP3/FLAC/WAV/AAC/M4A/MP4/MOV file.`,
+  );
+  s.updateTrack(t.id, { missing: true });
+  s.setIsPlaying(false);
+  updateMediaSessionPlayback("paused");
+}
+
+function bindVideoEvents(el: HTMLVideoElement) {
+  if (videoListenersBound) return;
+  videoListenersBound = true;
+  const store = () => useAppStore.getState();
+
+  el.addEventListener("timeupdate", () => {
+    store().setPosition(el.currentTime);
+  });
+  el.addEventListener("ended", () => {
+    const s = store();
+    if (s.repeat === "one") {
+      el.currentTime = 0;
+      el.play().catch(() => {});
+      return;
+    }
+    next();
+  });
+  el.addEventListener("error", handleMediaError);
+  el.addEventListener("playing", () => updateMediaSessionPlayback("playing"));
+  el.addEventListener("pause", () => updateMediaSessionPlayback("paused"));
+}
+
+/** Called by VideoOverlay when its <video> element mounts/unmounts. */
+export function registerVideoElement(el: HTMLVideoElement | null) {
+  videoEl = el;
+  if (el) {
+    bindVideoEvents(el);
+    applyVolumeFromStore();
+  }
+}
+
+/**
+ * Get the video element, lazily re-finding it in the DOM if registration
+ * was lost (e.g. this module hot-reloaded while the component stayed
+ * mounted). Returns null when the overlay isn't mounted.
+ */
+function getVideoEl(): HTMLVideoElement | null {
+  if (videoEl) return videoEl;
+  const el = document.querySelector<HTMLVideoElement>("video[data-amp-video]");
+  if (el) {
+    videoEl = el;
+    bindVideoEvents(el);
+    applyVolumeFromStore();
+  }
+  return el;
 }
 
 function updateMediaSessionPlayback(state: MediaSessionPlaybackState) {
@@ -183,8 +279,9 @@ function bindMediaSessionActions() {
   navigator.mediaSession.setActionHandler("previoustrack", () => prev());
   navigator.mediaSession.setActionHandler("nexttrack", () => next());
   navigator.mediaSession.setActionHandler("seekto", (d) => {
-    if (audio && d.seekTime != null) {
-      audio.currentTime = d.seekTime;
+    const el = activeMedia();
+    if (el && d.seekTime != null) {
+      el.currentTime = d.seekTime;
       s().setPosition(d.seekTime);
     }
   });
@@ -192,9 +289,42 @@ function bindMediaSessionActions() {
 
 export async function playTrack(track: Track) {
   const s = useAppStore.getState;
-  const el = getAudio();
-  bindAudioEvents();
   bindMediaSessionActions();
+  const video = isVideoPath(track.path);
+
+  if (video && s().videoPopupOpen) {
+    // The pop-up window owns the <video> element — hand it the file.
+    audio?.pause();
+    videoEl?.pause();
+    sendVideoCmd({ cmd: "load", path: track.path, position: 0, autoplay: true });
+    s().setCurrentTrack(track.id);
+    s().setPosition(0);
+    s().setPlaybackError(null);
+    s().updateTrack(track.id, { missing: false });
+    s().setIsPlaying(true);
+    s().incrementPlayCount(track.id);
+    s().addHistoryEntry({
+      trackId: track.id,
+      title: track.title,
+      artist: track.artist,
+      playedAt: Date.now(),
+    });
+    updateMediaSessionMetadata(track);
+    updateMediaSessionPlayback("playing");
+    return;
+  }
+
+  const el: HTMLMediaElement | null = video ? getVideoEl() : getAudio();
+  if (!el) {
+    s().setPlaybackError("The video player is not ready yet — try again.");
+    return;
+  }
+  if (video) {
+    audio?.pause();
+  } else {
+    getVideoEl()?.pause();
+    bindAudioEvents();
+  }
 
   el.src = convertFileSrc(track.path);
   el.currentTime = 0;
@@ -226,23 +356,39 @@ export async function playTrack(track: Track) {
 
 export function play() {
   const s = useAppStore.getState();
-  if (!audio?.src) {
+  if (videoInPopup()) {
+    sendVideoCmd({ cmd: "play" });
+    s.setIsPlaying(true);
+    return;
+  }
+  const el = activeMedia();
+  if (!el?.src) {
     const t = s.tracks.find((x) => x.id === s.currentTrackId) ?? s.tracks[0];
     if (t) return playTrack(t);
     return;
   }
   if (ctx?.state === "suspended") ctx.resume().catch(() => {});
-  audio.play().then(() => s.setIsPlaying(true)).catch(() => {});
+  el.play().then(() => s.setIsPlaying(true)).catch(() => {});
 }
 
 export function pause() {
-  audio?.pause();
+  if (videoInPopup()) {
+    sendVideoCmd({ cmd: "pause" });
+  } else {
+    activeMedia()?.pause();
+  }
   useAppStore.getState().setIsPlaying(false);
 }
 
 export function seek(seconds: number) {
-  if (audio) {
-    audio.currentTime = seconds;
+  if (videoInPopup()) {
+    sendVideoCmd({ cmd: "seek", value: seconds });
+    useAppStore.getState().setPosition(seconds);
+    return;
+  }
+  const el = activeMedia();
+  if (el) {
+    el.currentTime = seconds;
     useAppStore.getState().setPosition(seconds);
   }
 }
@@ -264,7 +410,7 @@ export function next() {
   }
   if (!nextId) {
     s.setIsPlaying(false);
-    audio?.pause();
+    activeMedia()?.pause();
     return;
   }
   const t = s.tracks.find((x) => x.id === nextId);
@@ -274,7 +420,7 @@ export function next() {
 export function prev() {
   const s = useAppStore.getState();
   // Standard behavior: >3s in restarts the track
-  if (audio && audio.currentTime > 3) {
+  if (s.position > 3) {
     seek(0);
     return;
   }
@@ -287,4 +433,8 @@ export function prev() {
 
 export function getAudioElement() {
   return audio;
+}
+
+export function getVideoElement() {
+  return getVideoEl();
 }
