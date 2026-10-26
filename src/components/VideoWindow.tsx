@@ -3,7 +3,7 @@
 // reports playback state back over Tauri events (see lib/videoWindow.ts).
 import { useEffect, useRef } from "react";
 import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { mediaUrl } from "../lib/player";
 
 interface VideoCmd {
   cmd: "load" | "play" | "pause" | "seek";
@@ -41,7 +41,7 @@ export function VideoWindow() {
       switch (p.cmd) {
         case "load": {
           // Skip re-setting an identical src — avoids aborting an in-flight load
-          const src = p.path ? convertFileSrc(p.path) : "";
+          const src = p.path ? mediaUrl(p.path) : "";
           if (src && el.src !== src) el.src = src;
           if (typeof p.position === "number") el.currentTime = p.position;
           if (p.autoplay) el.play().catch(reportRealError);

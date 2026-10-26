@@ -4,7 +4,8 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, ItemValue, TagExt, TagItem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
+use std::borrow::Cow;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::menu::{Menu, MenuItem};
@@ -495,6 +496,98 @@ fn download_youtube(
     Ok(path)
 }
 
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn media_mime(path: &str) -> &'static str {
+    match path
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("mp3") => "audio/mpeg",
+        Some("flac") => "audio/flac",
+        Some("wav") => "audio/wav",
+        Some("aac") => "audio/aac",
+        Some("m4a") => "audio/mp4",
+        Some("mp4") | Some("m4v") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("webm") => "video/webm",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve a media file over the custom `media://` scheme, with HTTP Range
+/// support for seeking. Works on local, mapped-drive, and UNC paths — the
+/// built-in asset protocol can't reliably serve network paths on Windows.
+fn serve_media(path: &str, range: Option<&str>) -> tauri::http::Response<Cow<'static, [u8]>> {
+    use tauri::http::{header, Response, StatusCode};
+    let not_found = || {
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Cow::Borrowed(&[][..]))
+            .unwrap()
+    };
+    let len = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(_) => return not_found(),
+    };
+
+    let (start, end, partial) = if let Some(r) = range.and_then(|v| v.strip_prefix("bytes=")) {
+        let mut it = r.split('-');
+        let s: u64 = it
+            .next()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0)
+            .min(len.saturating_sub(1));
+        let e: u64 = it
+            .next()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(len.saturating_sub(1))
+            .min(len.saturating_sub(1));
+        (s, e.max(s), true)
+    } else {
+        (0u64, len.saturating_sub(1), false)
+    };
+
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return not_found(),
+    };
+    let mut buf = vec![0u8; end.saturating_sub(start).saturating_add(1) as usize];
+    if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut buf).is_err() {
+        return not_found();
+    }
+
+    let mut b = Response::builder()
+        .header(header::CONTENT_TYPE, media_mime(path))
+        .header(header::CONTENT_LENGTH, buf.len())
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+    if partial {
+        b = b
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"));
+    }
+    b.body(Cow::Owned(buf)).unwrap()
+}
+
 struct CloseToTray(std::sync::Mutex<bool>);
 
 #[tauri::command]
@@ -510,6 +603,14 @@ pub fn run() {
         .manage(CloseToTray(std::sync::Mutex::new(true)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .register_uri_scheme_protocol("media", |_ctx, request| {
+            let path = percent_decode(request.uri().path().trim_start_matches('/'));
+            let range = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok());
+            serve_media(&path, range)
+        })
         .invoke_handler(tauri::generate_handler![
             scan_folders,
             scan_files,

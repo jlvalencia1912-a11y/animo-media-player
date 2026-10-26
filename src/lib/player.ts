@@ -1,4 +1,9 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+
+/** Stream a media file over the app's custom protocol — works on local,
+ *  mapped-drive, and UNC network paths (asset.localhost can't). */
+export const mediaUrl = (p: string) =>
+  `media://localhost/${encodeURIComponent(p)}`;
 import { emitTo } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import { isVideoPath, type Track } from "../types";
@@ -326,7 +331,7 @@ export async function playTrack(track: Track) {
     bindAudioEvents();
   }
 
-  el.src = convertFileSrc(track.path);
+  el.src = mediaUrl(track.path);
   el.currentTime = 0;
   s().setCurrentTrack(track.id);
   s().setPosition(0);
