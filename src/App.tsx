@@ -14,7 +14,7 @@ import { TagEditorDialog } from "./components/TagEditorDialog";
 import { AddFromLinkDialog } from "./components/AddFromLinkDialog";
 import { VideoOverlay } from "./components/VideoOverlay";
 import { useAppStore } from "./store";
-import { play, pause, seek } from "./lib/player";
+import { play, pause, seek, initMediaPort } from "./lib/player";
 import { startBridge } from "./lib/bridge";
 import { startFileDropListener } from "./lib/dnd";
 import { stopRecording } from "./lib/recorder";
@@ -89,6 +89,11 @@ export function App() {
 
   // Video pop-up window bridge (state reports -> store)
   useEffect(() => startVideoBridge(), []);
+
+  // Embedded media server port (127.0.0.1) for audio/video streaming
+  useEffect(() => {
+    initMediaPort();
+  }, []);
 
   // Safety net: clear drop-zone highlight when any internal drag ends
   useEffect(() => {

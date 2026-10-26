@@ -1,9 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Stream a media file over the app's custom protocol — works on local,
- *  mapped-drive, and UNC network paths (asset.localhost can't). */
+/** Stream media via the app's embedded HTTP server — works on local,
+ *  mapped-drive, and UNC network paths on every platform. */
+let mediaPort = 48760;
+export async function initMediaPort() {
+  try {
+    const p = await invoke<number>("media_port");
+    if (p) mediaPort = p;
+  } catch {}
+}
 export const mediaUrl = (p: string) =>
-  `media://localhost/${encodeURIComponent(p)}`;
+  `http://127.0.0.1:${mediaPort}/${encodeURIComponent(p)}`;
 import { emitTo } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import { isVideoPath, type Track } from "../types";

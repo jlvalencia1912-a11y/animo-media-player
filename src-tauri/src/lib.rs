@@ -4,7 +4,6 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, ItemValue, TagExt, TagItem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::borrow::Cow;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -533,23 +532,15 @@ fn media_mime(path: &str) -> &'static str {
     }
 }
 
-/// Serve a media file over the custom `media://` scheme, with HTTP Range
-/// support for seeking. Works on local, mapped-drive, and UNC paths — the
-/// built-in asset protocol can't reliably serve network paths on Windows.
-fn serve_media(path: &str, range: Option<&str>) -> tauri::http::Response<Cow<'static, [u8]>> {
-    use tauri::http::{header, Response, StatusCode};
-    let not_found = || {
-        Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Cow::Borrowed(&[][..]))
-            .unwrap()
-    };
-    let len = match std::fs::metadata(path) {
-        Ok(m) => m.len(),
-        Err(_) => return not_found(),
-    };
-
-    let (start, end, partial) = if let Some(r) = range.and_then(|v| v.strip_prefix("bytes=")) {
+/// Read a media file for the localhost media server, honoring an optional
+/// "start-end" byte range (already stripped of the "bytes=" prefix).
+/// Returns (is_partial, start, end, total_len, bytes).
+fn media_parts(
+    path: &str,
+    range: Option<&str>,
+) -> Result<(bool, u64, u64, u64, Vec<u8>), ()> {
+    let len = std::fs::metadata(path).map_err(|_| ())?.len();
+    let (start, end, partial) = if let Some(r) = range {
         let mut it = r.split('-');
         let s: u64 = it
             .next()
@@ -566,26 +557,74 @@ fn serve_media(path: &str, range: Option<&str>) -> tauri::http::Response<Cow<'st
         (0u64, len.saturating_sub(1), false)
     };
 
-    let mut file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return not_found(),
-    };
+    let mut file = std::fs::File::open(path).map_err(|_| ())?;
     let mut buf = vec![0u8; end.saturating_sub(start).saturating_add(1) as usize];
-    if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut buf).is_err() {
-        return not_found();
-    }
+    file.seek(SeekFrom::Start(start)).map_err(|_| ())?;
+    file.read_exact(&mut buf).map_err(|_| ())?;
+    Ok((partial, start, end, len, buf))
+}
 
-    let mut b = Response::builder()
-        .header(header::CONTENT_TYPE, media_mime(path))
-        .header(header::CONTENT_LENGTH, buf.len())
-        .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
-    if partial {
-        b = b
-            .status(StatusCode::PARTIAL_CONTENT)
-            .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"));
+static MEDIA_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+#[tauri::command]
+fn media_port() -> u16 {
+    MEDIA_PORT.get().copied().unwrap_or(0)
+}
+
+fn handle_media_req(req: tiny_http::Request) {
+    let path = percent_decode(req.url().trim_start_matches('/'));
+    let range = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("range"))
+        .and_then(|h| h.value.as_str().strip_prefix("bytes=").map(|s| s.to_string()));
+
+    match media_parts(&path, range.as_deref()) {
+        Ok((partial, start, end, len, buf)) => {
+            let mut resp = tiny_http::Response::from_data(buf)
+                .with_status_code(tiny_http::StatusCode(if partial { 206 } else { 200 }));
+            let headers: Vec<(&str, String)> = [
+                ("Content-Type", media_mime(&path).to_string()),
+                ("Accept-Ranges", "bytes".to_string()),
+                ("Access-Control-Allow-Origin", "*".to_string()),
+            ]
+            .into_iter()
+            .chain(if partial {
+                vec![(
+                    "Content-Range",
+                    format!("bytes {start}-{end}/{len}"),
+                )]
+            } else {
+                vec![]
+            })
+            .collect();
+            for (k, v) in headers {
+                if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+                    resp.add_header(h);
+                }
+            }
+            let _ = req.respond(resp);
+        }
+        Err(_) => {
+            let _ = req.respond(tiny_http::Response::empty(404));
+        }
     }
-    b.body(Cow::Owned(buf)).unwrap()
+}
+
+/// Embedded HTTP server so media elements can stream files by URL —
+/// local, mapped-drive, and UNC network paths alike, on every platform.
+fn start_media_server() {
+    std::thread::spawn(|| {
+        for port in 48760u16..48780 {
+            if let Ok(server) = tiny_http::Server::http(("127.0.0.1", port)) {
+                let _ = MEDIA_PORT.set(port);
+                for req in server.incoming_requests() {
+                    std::thread::spawn(move || handle_media_req(req));
+                }
+                return;
+            }
+        }
+    });
 }
 
 struct CloseToTray(std::sync::Mutex<bool>);
@@ -603,13 +642,9 @@ pub fn run() {
         .manage(CloseToTray(std::sync::Mutex::new(true)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .register_uri_scheme_protocol("media", |_ctx, request| {
-            let path = percent_decode(request.uri().path().trim_start_matches('/'));
-            let range = request
-                .headers()
-                .get("range")
-                .and_then(|v| v.to_str().ok());
-            serve_media(&path, range)
+        .setup(|_app| {
+            start_media_server();
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             scan_folders,
@@ -617,6 +652,7 @@ pub fn run() {
             read_cover,
             write_tags,
             file_exists,
+            media_port,
             save_recording,
             download_youtube,
             set_close_to_tray
