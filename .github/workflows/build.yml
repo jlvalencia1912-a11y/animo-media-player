@@ -20,6 +20,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install frontend deps
+        run: npm ci
+
       - name: Download media binaries (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
