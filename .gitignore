@@ -5,4 +5,5 @@ src-tauri/gen
 app-icon.png
 *.log
 .DS_Store
-src-tauri/binaries/
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep

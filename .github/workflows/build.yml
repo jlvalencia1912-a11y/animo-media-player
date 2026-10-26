@@ -1,5 +1,8 @@
 name: Build installers
 
+permissions:
+  contents: write
+
 on:
   push:
     tags: ["v*"]
