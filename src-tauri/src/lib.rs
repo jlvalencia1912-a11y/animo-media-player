@@ -406,8 +406,14 @@ fn download_youtube(
     // video+audio streams into a single mp4.
     let ffmpeg_dir = bin.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-    let mut child = std::process::Command::new(&bin)
-        .env("PATH", path_env)
+    // Snapshot the download dir so the new file can be found afterward even
+    // if yt-dlp's printed path can't be parsed (Windows output varies).
+    let before: HashSet<PathBuf> = std::fs::read_dir(&out_dir)
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+        .unwrap_or_default();
+
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.env("PATH", path_env)
         .arg("--no-playlist")
         .arg("--js-runtimes")
         .arg("node")
@@ -424,9 +430,15 @@ fn download_youtube(
         .arg("after_move:filepath")
         .arg(&url)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Could not run yt-dlp: {e}"))?;
+        .stderr(std::process::Stdio::piped());
+    // On Windows, spawning a console app from a GUI app pops a console
+    // window — suppress it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("Could not run yt-dlp: {e}"))?;
 
     // Drain stderr on a thread so a full pipe never deadlocks the download.
     // yt-dlp also writes its progress bar to stderr — emit percent events.
@@ -463,12 +475,24 @@ fn download_youtube(
     if !status.success() {
         return Err(format!("yt-dlp failed: {}", stderr_str.trim()));
     }
-    lines
+    // Prefer the printed filepath; fall back to the newest new file in the
+    // download dir.
+    let path = lines
         .iter()
         .rev()
         .map(|l| l.trim().to_string())
         .find(|l| Path::new(l).is_file())
-        .ok_or_else(|| "yt-dlp finished but no file path was returned".to_string())
+        .or_else(|| {
+            std::fs::read_dir(&out_dir)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && !before.contains(p))
+                .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+                .map(|p| p.to_string_lossy().to_string())
+        })
+        .ok_or_else(|| "yt-dlp finished but no file path was returned".to_string())?;
+    Ok(path)
 }
 
 struct CloseToTray(std::sync::Mutex<bool>);
