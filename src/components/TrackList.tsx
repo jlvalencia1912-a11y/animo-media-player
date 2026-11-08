@@ -50,13 +50,13 @@ function CoverThumb({ track }: { track: Track }) {
       <img
         src={url}
         alt=""
-        className="h-6 w-6 shrink-0 rounded object-cover"
+        className={`h-6 w-6 shrink-0 rounded object-cover${isVideoPath(track.path) ? " amp-thumb-spin" : ""}`}
       />
     );
   }
   const Icon = isVideoPath(track.path) ? Video : Music;
   return (
-    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated">
+    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated${isVideoPath(track.path) ? " amp-thumb-spin" : ""}`}>
       <Icon className="h-3.5 w-3.5 text-muted-foreground" />
     </span>
   );
@@ -159,8 +159,13 @@ export function TrackList() {
     if (view.kind !== "recent-added" && view.kind !== "recent-played") {
       const dir = sortDir === "asc" ? 1 : -1;
       list = [...list].sort((a, b) => {
-        const av = a[sortBy] ?? "";
-        const bv = b[sortBy] ?? "";
+        const numSort = sortBy === "trackNumber";
+        const av = numSort
+          ? (leadingFileNumber(a.path) ?? a.trackNumber ?? 0)
+          : (a[sortBy] ?? "");
+        const bv = numSort
+          ? (leadingFileNumber(b.path) ?? b.trackNumber ?? 0)
+          : (b[sortBy] ?? "");
         return (
           dir *
           (typeof av === "number" && typeof bv === "number"

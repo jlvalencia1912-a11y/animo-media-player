@@ -68,3 +68,11 @@ body.track-dragging iframe,
 body.track-dragging video {
   pointer-events: none;
 }
+
+/* Video thumbnails spin on hover — transform only, layout stays put */
+.amp-thumb-spin {
+  transition: transform 0.6s ease;
+}
+.amp-thumb-spin:hover {
+  transform: rotate(360deg);
+}

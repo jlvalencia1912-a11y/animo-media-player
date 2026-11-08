@@ -14,6 +14,10 @@ import { next, getVideoElement } from "./player";
 
 const LABEL = "video";
 
+export function sendVideoCmd(payload: Record<string, unknown>) {
+  sendCmd(payload);
+}
+
 function sendCmd(payload: Record<string, unknown>) {
   emitTo(LABEL, "amp:video-cmd", payload).catch(() => {});
 }
@@ -28,6 +32,7 @@ function handoffToPopup() {
     path: t.path,
     position: s.position,
     autoplay: s.isPlaying,
+    volume: s.volume,
   });
   getVideoElement()?.pause();
 }

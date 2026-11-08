@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { X, ExternalLink, MonitorPlay } from "lucide-react";
 import { useAppStore } from "../store";
 import { registerVideoElement, pause } from "../lib/player";
-import { openVideoWindow, closeVideoWindow } from "../lib/videoWindow";
+import { openVideoWindow, closeVideoWindow, sendVideoCmd } from "../lib/videoWindow";
 import { isVideoPath } from "../types";
 
 /**
@@ -66,7 +66,24 @@ export function VideoOverlay() {
         </div>
       )}
       {visible && (
-        <div className="absolute right-3 top-14 flex flex-col gap-2">
+        <div className="absolute right-3 top-14 flex flex-col items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            defaultValue={useAppStore.getState().volume}
+            title="Volume"
+            aria-label="Video volume"
+            className="h-20 w-1.5 accent-[#a879f5] [writing-mode:vertical-lr]"
+            onChange={(e) => {
+              const v = parseFloat(e.currentTarget.value);
+              const vid = document.querySelector<HTMLVideoElement>("video");
+              if (vid) vid.volume = v;
+              useAppStore.getState().updateSettings({ volume: v });
+              sendVideoCmd({ cmd: "volume", value: v });
+            }}
+          />
           <button
             onClick={close}
             aria-label="Close video"

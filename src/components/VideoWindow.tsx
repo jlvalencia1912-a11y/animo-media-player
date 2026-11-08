@@ -6,9 +6,10 @@ import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { mediaUrl, playViaBlob } from "../lib/player";
 
 interface VideoCmd {
-  cmd: "load" | "play" | "pause" | "seek";
+  cmd: "load" | "play" | "pause" | "seek" | "volume";
   path?: string;
   position?: number;
+  volume?: number;
   value?: number;
   autoplay?: boolean;
 }
@@ -56,6 +57,7 @@ export function VideoWindow() {
           currentPath = p.path ?? "";
           const src = p.path ? mediaUrl(p.path) : "";
           if (src && el.src !== src) el.src = src;
+          if (typeof p.volume === "number") el.volume = p.volume;
           if (typeof p.position === "number") el.currentTime = p.position;
           if (p.autoplay) el.play().catch(reportRealError);
           break;
@@ -68,6 +70,9 @@ export function VideoWindow() {
           break;
         case "seek":
           if (typeof p.value === "number") el.currentTime = p.value;
+          break;
+        case "volume":
+          if (typeof p.value === "number") el.volume = p.value;
           break;
       }
     }).then((f) => {

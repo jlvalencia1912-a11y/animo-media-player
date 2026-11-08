@@ -11,6 +11,8 @@ import {
   Maximize2,
 } from "lucide-react";
 import type { MiniState } from "../lib/bridge";
+import { useAppStore } from "../store";
+import { trackNum } from "../types";
 
 const EMPTY: MiniState = {
   trackId: null,
@@ -40,6 +42,9 @@ const closeMini = async () => {
 };
 
 export function MiniPlayer() {
+  const track = useAppStore((s) =>
+    s.tracks.find((x) => x.id === s.currentTrackId),
+  );
   const [state, setState] = useState<MiniState>(EMPTY);
 
   useEffect(() => {
@@ -87,7 +92,9 @@ export function MiniPlayer() {
 
       <div className="min-w-0 flex-1 select-none">
         <div className="truncate text-sm font-medium text-foreground">
-          {state.title || "Nothing playing"}
+          {track
+            ? `${trackNum(track) ? `${trackNum(track)} · ` : ""}${state.title || track.title}`
+            : state.title || "Nothing playing"}
         </div>
         <div className="truncate text-xs text-muted-foreground">
           {state.artist || "—"}

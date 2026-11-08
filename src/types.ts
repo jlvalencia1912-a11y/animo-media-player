@@ -80,3 +80,14 @@ export const isRecordingTrack = (
   const dir = recordingDir.replace(/\\/g, "/").replace(/\/+$/, "");
   return dir !== "" && p.startsWith(dir + "/");
 };
+
+/** Effective track number: leading filename digits ("0156_...") win,
+ *  falling back to the tag value. */
+export function trackNum(t: { path: string; trackNumber: number | null }) {
+  const m = t.path
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.match(/^0*(\d+)[\s_.-]/);
+  return m ? parseInt(m[1], 10) : t.trackNumber;
+}

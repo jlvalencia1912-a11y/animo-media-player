@@ -13,6 +13,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useAppStore } from "../store";
+import { trackNum } from "../types";
 import {
   play,
   pause,
@@ -93,7 +94,9 @@ export function PlayerBar() {
         </div>
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-foreground">
-            {track ? track.title : "Nothing playing"}
+            {track
+              ? `${trackNum(track) ? `${trackNum(track)} · ` : ""}${track.title}`
+              : "Nothing playing"}
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {track
