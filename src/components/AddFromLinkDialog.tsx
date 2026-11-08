@@ -16,22 +16,29 @@ type Status =
 const YT_RE =
   /^(https?:\/\/)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i;
 
-/** Resolution choices mapped to yt-dlp format selectors. Prefers separate
- *  mp4 video + m4a audio streams merged by the bundled ffmpeg — muxed
- *  progressive MP4 only exists at 360p on YouTube. */
+/** Resolution choices mapped to yt-dlp format selectors. Locks to h264
+ *  (avc) video + aac (mp4a) audio merged to mp4 — plays in WebView2,
+ *  WKWebView, QuickTime, everywhere. */
 const RESOLUTIONS: { label: string; format: string }[] = [
-  { label: "Best available", format: "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b" },
+  {
+    label: "Best available",
+    format:
+      "bv*[vcodec^=avc][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/bv*+ba/b",
+  },
   {
     label: "1080p",
-    format: "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/b",
+    format:
+      "bv*[vcodec^=avc][ext=mp4][height<=1080]+ba[acodec^=mp4a][ext=m4a]/bv*[height<=1080]+ba/b",
   },
   {
     label: "720p",
-    format: "bv*[ext=mp4][height<=720]+ba[ext=m4a]/bv*[height<=720]+ba/b",
+    format:
+      "bv*[vcodec^=avc][ext=mp4][height<=720]+ba[acodec^=mp4a][ext=m4a]/bv*[height<=720]+ba/b",
   },
   {
     label: "480p",
-    format: "bv*[ext=mp4][height<=480]+ba[ext=m4a]/bv*[height<=480]+ba/b",
+    format:
+      "bv*[vcodec^=avc][ext=mp4][height<=480]+ba[acodec^=mp4a][ext=m4a]/bv*[height<=480]+ba/b",
   },
 ];
 const AUDIO_EXT_RE = /\.(mp3|flac|wav|aac|m4a)([?#].*)?$/i;

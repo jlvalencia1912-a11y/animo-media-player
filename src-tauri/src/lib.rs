@@ -4,7 +4,7 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, ItemValue, TagExt, TagItem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tauri::menu::{Menu, MenuItem};
@@ -358,6 +358,27 @@ fn parse_progress_percent(line: &str) -> Option<f64> {
     None
 }
 
+/// Feed each completed output fragment to `on_line`, splitting on both
+/// \n and \r — yt-dlp's progress bar uses carriage returns on Windows.
+fn read_fragments<R: Read>(reader: R, mut on_line: impl FnMut(&str)) {
+    let mut br = BufReader::new(reader);
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while br.read(&mut byte).unwrap_or(0) == 1 {
+        if byte[0] == b'\n' || byte[0] == b'\r' {
+            if !buf.is_empty() {
+                on_line(&String::from_utf8_lossy(&buf));
+                buf.clear();
+            }
+        } else {
+            buf.push(byte[0]);
+        }
+    }
+    if !buf.is_empty() {
+        on_line(&String::from_utf8_lossy(&buf));
+    }
+}
+
 /// Download a YouTube video via the bundled yt-dlp binary into
 /// ~/Desktop/Animo Downloads/. `format` is a yt-dlp format selector chosen
 /// by the UI (single muxed files only — no ffmpeg merge needed). Streams
@@ -446,30 +467,25 @@ fn download_youtube(
     let app2 = app.clone();
     let err_handle = std::thread::spawn(move || {
         let mut s = String::new();
-        for line in BufReader::new(stderr).lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => break,
-            };
-            if let Some(p) = parse_progress_percent(&line) {
+        read_fragments(stderr, |line| {
+            if let Some(p) = parse_progress_percent(line) {
                 let _ = app2.emit("amp:dl-progress", p);
             }
-            s.push_str(&line);
+            s.push_str(line);
             s.push('\n');
-        }
+        });
         s
     });
 
     // stdout: progress lines during download, final filepath last.
     let stdout = child.stdout.take().unwrap();
     let mut lines: Vec<String> = Vec::new();
-    for line in BufReader::new(stdout).lines() {
-        let line = line.unwrap_or_default();
-        if let Some(p) = parse_progress_percent(&line) {
+    read_fragments(stdout, |line| {
+        if let Some(p) = parse_progress_percent(line) {
             let _ = app.emit("amp:dl-progress", p);
         }
-        lines.push(line);
-    }
+        lines.push(line.to_string());
+    });
     let status = child.wait().map_err(|e| e.to_string())?;
     let stderr_str = err_handle.join().unwrap_or_default();
     if !status.success() {
