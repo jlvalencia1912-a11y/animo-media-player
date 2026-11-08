@@ -188,6 +188,9 @@ function bindAudioEvents() {
   audio.addEventListener("pause", () => updateMediaSessionPlayback("paused"));
 }
 
+// Tracks we've already tried transcoding to MP3 (per session)
+const convertRetries = new Set<string>();
+
 function handleMediaError(e: Event) {
   const el = e.currentTarget as HTMLMediaElement;
   // MEDIA_ERR_ABORTED fires when a new src replaces an in-flight load or a
@@ -198,6 +201,32 @@ function handleMediaError(e: Event) {
   const s = useAppStore.getState();
   const t = s.tracks.find((x) => x.id === s.currentTrackId);
   if (!t) return;
+
+  // Undecodable audio (e.g. ALAC-in-m4a on WebView2) — transcode to MP3
+  // once with the bundled ffmpeg and retry.
+  if (
+    el.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED &&
+    !isVideoPath(t.path) &&
+    !convertRetries.has(t.id)
+  ) {
+    convertRetries.add(t.id);
+    s.setPlaybackError(`"${t.title}" uses an unsupported codec — converting to MP3…`);
+    invoke<string>("convert_to_mp3", { path: t.path })
+      .then((mp3) => {
+        el.src = mediaUrl(mp3);
+        el.load();
+        el.play().catch(() => {});
+      })
+      .catch(() =>
+        useAppStore
+          .getState()
+          .setPlaybackError(
+            `Could not play "${t.title}" — the file could not be converted.`,
+          ),
+      );
+    return;
+  }
+
   s.setPlaybackError(
     `Could not play "${t.title}". The file may be missing, moved, or in an unsupported format. ` +
       `Check that ${t.path} exists and is a readable MP3/FLAC/WAV/AAC/M4A/MP4/MOV file.`,

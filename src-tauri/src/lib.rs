@@ -643,6 +643,67 @@ fn start_media_server() {
     });
 }
 
+/// Resolve a bundled binary: dev source tree -> bundled resource -> PATH.
+fn resolve_binary(app: &tauri::AppHandle, name: &str) -> PathBuf {
+    let exe = std::env::consts::EXE_SUFFIX;
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("binaries/{name}{exe}"));
+    if dev.is_file() {
+        return dev;
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        let p = res.join(format!("binaries/{name}{exe}"));
+        if p.is_file() {
+            return p;
+        }
+    }
+    PathBuf::from(format!("{name}{exe}"))
+}
+
+/// Transcode a media file to MP3 via the bundled ffmpeg — used as a
+/// fallback when the webview can't decode a file (e.g. ALAC-in-m4a on
+/// Windows). Output goes to app-data/converted/<name>.mp3.
+#[tauri::command]
+fn convert_to_mp3(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let ffmpeg = resolve_binary(&app, "ffmpeg");
+    let out_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("converted");
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    let stem = Path::new(&path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "converted".into());
+    let out = out_dir.join(format!("{stem}.mp3"));
+
+    let mut cmd = std::process::Command::new(&ffmpeg);
+    cmd.arg("-y")
+        .arg("-i")
+        .arg(&path)
+        .arg("-vn")
+        .arg("-b:a")
+        .arg("192k")
+        .arg(&out)
+        .stdout(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let out2 = out.clone();
+    let status = cmd
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("Could not run ffmpeg: {e}"))?;
+    if !status.success() || !out2.is_file() {
+        return Err("ffmpeg could not convert this file".into());
+    }
+    Ok(out2.to_string_lossy().to_string())
+}
+
 struct CloseToTray(std::sync::Mutex<bool>);
 
 #[tauri::command]
@@ -668,6 +729,7 @@ pub fn run() {
             read_cover,
             write_tags,
             file_exists,
+            convert_to_mp3,
             media_port,
             save_recording,
             download_youtube,
