@@ -170,6 +170,17 @@ export function SettingsPanel() {
         {/* Appearance */}
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Appearance</h3>
+          <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              className="accent-[#a879f5]"
+              checked={settings.theme === "light"}
+              onChange={(e) =>
+                updateSettings({ theme: e.target.checked ? "light" : "dark" })
+              }
+            />
+            Light mode
+          </label>
           <label className="flex cursor-pointer items-center gap-3 rounded-lg bg-surface-elevated px-3 py-2.5">
             <input
               type="checkbox"

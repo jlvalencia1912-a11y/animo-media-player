@@ -416,6 +416,16 @@ export async function playTrack(track: Track) {
   s().setPosition(0);
   s().setPlaybackError(null);
   s().updateTrack(track.id, { missing: false });
+  // Log the play now — if the transport fails and a fallback kicks in,
+  // the history entry still lands.
+  s().incrementPlayCount(track.id);
+  s().addHistoryEntry({
+    trackId: track.id,
+    title: track.title,
+    artist: track.artist,
+    playedAt: Date.now(),
+  });
+  updateMediaSessionMetadata(track);
 
   if (ctx?.state === "suspended") await ctx.resume().catch(() => {});
   try {
@@ -425,20 +435,56 @@ export async function playTrack(track: Track) {
       await el.play();
     }
     s().setIsPlaying(true);
-    s().incrementPlayCount(track.id);
-    s().addHistoryEntry({
-      trackId: track.id,
-      title: track.title,
-      artist: track.artist,
-      playedAt: Date.now(),
-    });
-    updateMediaSessionMetadata(track);
     updateMediaSessionPlayback("playing");
   } catch (e) {
     s().setIsPlaying(false);
     s().setPlaybackError(
       `Playback failed for "${track.title}": ${e instanceof Error ? e.message : e}`,
     );
+  }
+}
+
+let fadeTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Ramp a media element's volume toward `target` over ~1.5s. */
+function rampVolume(el: HTMLMediaElement, target: number, done?: () => void) {
+  if (fadeTimer) clearInterval(fadeTimer);
+  const steps = 30;
+  const start = el.volume;
+  let i = 0;
+  fadeTimer = setInterval(() => {
+    i++;
+    el.volume = Math.min(
+      1,
+      Math.max(0, start + (target - start) * (i / steps)),
+    );
+    if (i >= steps) {
+      clearInterval(fadeTimer!);
+      fadeTimer = null;
+      done?.();
+    }
+  }, 50);
+}
+
+/** Fade toggle — smoothly fades the current song out then pauses; press
+ *  again to fade back in. */
+export function fadeToggle() {
+  const s = useAppStore.getState();
+  const el = getAudio();
+  if (!el || !el.src) return;
+  if (s.isPlaying) {
+    rampVolume(el, 0, () => {
+      el.pause();
+      el.volume = s.volume; // restore level for the next play
+    });
+    s.setIsPlaying(false);
+    updateMediaSessionPlayback("paused");
+  } else {
+    el.volume = 0;
+    el.play().catch(() => {});
+    rampVolume(el, s.volume);
+    s.setIsPlaying(true);
+    updateMediaSessionPlayback("playing");
   }
 }
 

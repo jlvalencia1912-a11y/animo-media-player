@@ -85,3 +85,14 @@ body.track-dragging video {
 .amp-side-item:hover {
   animation: amp-nod 0.6s ease-in-out infinite;
 }
+
+/* Light mode overrides — toggled via html.light class */
+html.light {
+  --color-background: #f4f4f9;
+  --color-surface: #ffffff;
+  --color-surface-elevated: #eceaf5;
+  --color-surface-hover: #dfddf0;
+  --color-border: #d5d2e8;
+  --color-foreground: #1c1b2b;
+  --color-muted-foreground: #6d6a85;
+}

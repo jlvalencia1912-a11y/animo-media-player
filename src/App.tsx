@@ -95,6 +95,12 @@ export function App() {
     initMediaPort();
   }, []);
 
+  // Light/dark theme
+  const theme = useAppStore((s) => s.settings.theme);
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
+  }, [theme]);
+
   // Native menu bar actions (File/Playback)
   useEffect(() => {
     const un = listen<string>("amp:menu", (e) => {

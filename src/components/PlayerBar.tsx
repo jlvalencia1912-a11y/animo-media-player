@@ -11,9 +11,11 @@ import {
   VolumeX,
   Music,
   SlidersHorizontal,
+  Waves,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { trackNum } from "../types";
+import { fadeToggle } from "../lib/player";
 import {
   play,
   pause,
@@ -123,6 +125,14 @@ export function PlayerBar() {
             className="text-foreground transition hover:text-accent"
           >
             <SkipBack className="h-5 w-5 fill-current" />
+          </button>
+          <button
+            aria-label="Fade out / fade in"
+            onClick={fadeToggle}
+            className="rounded-full p-2 text-muted-foreground transition hover:bg-surface-hover hover:text-foreground"
+            title="Fade out / fade in"
+          >
+            <Waves className="h-4 w-4" />
           </button>
           <button
             aria-label={isPlaying ? "Pause" : "Play"}
