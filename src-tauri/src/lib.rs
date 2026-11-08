@@ -587,7 +587,31 @@ fn media_port() -> u16 {
     MEDIA_PORT.get().copied().unwrap_or(0)
 }
 
+/// CORS + Private Network Access headers — Chromium requires the
+/// Allow-Private-Network header (and the OPTIONS preflight below) for
+/// public-origin pages to reach a loopback server.
+fn add_cors_headers<R: std::io::Read>(resp: &mut tiny_http::Response<R>) {
+    for (k, v) in [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Private-Network", "true"),
+        ("Access-Control-Allow-Methods", "GET, OPTIONS"),
+        ("Access-Control-Allow-Headers", "*"),
+    ] {
+        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp.add_header(h);
+        }
+    }
+}
+
 fn handle_media_req(req: tiny_http::Request) {
+    // PNA/CORS preflight — WebView2 sends this before media fetches.
+    if *req.method() == tiny_http::Method::Options {
+        let mut resp = tiny_http::Response::empty(200);
+        add_cors_headers(&mut resp);
+        let _ = req.respond(resp);
+        return;
+    }
+
     let path = percent_decode(req.url().trim_start_matches('/'));
     let range = req
         .headers()
@@ -602,7 +626,6 @@ fn handle_media_req(req: tiny_http::Request) {
             let headers: Vec<(&str, String)> = [
                 ("Content-Type", media_mime(&path).to_string()),
                 ("Accept-Ranges", "bytes".to_string()),
-                ("Access-Control-Allow-Origin", "*".to_string()),
             ]
             .into_iter()
             .chain(if partial {
@@ -619,10 +642,13 @@ fn handle_media_req(req: tiny_http::Request) {
                     resp.add_header(h);
                 }
             }
+            add_cors_headers(&mut resp);
             let _ = req.respond(resp);
         }
         Err(_) => {
-            let _ = req.respond(tiny_http::Response::empty(404));
+            let mut resp = tiny_http::Response::empty(404);
+            add_cors_headers(&mut resp);
+            let _ = req.respond(resp);
         }
     }
 }
