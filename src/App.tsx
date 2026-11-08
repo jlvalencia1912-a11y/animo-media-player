@@ -14,7 +14,7 @@ import { TagEditorDialog } from "./components/TagEditorDialog";
 import { AddFromLinkDialog } from "./components/AddFromLinkDialog";
 import { VideoOverlay } from "./components/VideoOverlay";
 import { useAppStore } from "./store";
-import { play, pause, seek, initMediaPort } from "./lib/player";
+import { play, pause, seek, next, prev, initMediaPort } from "./lib/player";
 import { startBridge } from "./lib/bridge";
 import { startFileDropListener } from "./lib/dnd";
 import { stopRecording } from "./lib/recorder";
@@ -93,6 +93,37 @@ export function App() {
   // Embedded media server port (127.0.0.1) for audio/video streaming
   useEffect(() => {
     initMediaPort();
+  }, []);
+
+  // Native menu bar actions (File/Playback)
+  useEffect(() => {
+    const un = listen<string>("amp:menu", (e) => {
+      const s = useAppStore.getState();
+      switch (e.payload) {
+        case "add-files":
+          s.setShowNewSongs(true);
+          break;
+        case "add-link":
+          s.setShowLinkDialog(true);
+          break;
+        case "settings":
+          s.setShowSettings(true);
+          break;
+        case "toggle-play":
+          if (s.isPlaying) pause();
+          else play();
+          break;
+        case "prev":
+          prev();
+          break;
+        case "next":
+          next();
+          break;
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   // Safety net: clear drop-zone highlight when any internal drag ends

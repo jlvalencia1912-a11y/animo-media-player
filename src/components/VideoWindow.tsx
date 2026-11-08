@@ -3,7 +3,7 @@
 // reports playback state back over Tauri events (see lib/videoWindow.ts).
 import { useEffect, useRef } from "react";
 import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { mediaUrl } from "../lib/player";
+import { mediaUrl, playViaBlob } from "../lib/player";
 
 interface VideoCmd {
   cmd: "load" | "play" | "pause" | "seek";
@@ -27,6 +27,18 @@ export function VideoWindow() {
         position: el.currentTime,
       }).catch(() => {});
 
+    let currentPath = "";
+
+    // On failure, retry via the IPC Blob transport — the localhost server
+    // may be unreachable (firewall/AV) on some PCs.
+    const tryBlobOrReport = () => {
+      if (el.error && el.error.code === MediaError.MEDIA_ERR_ABORTED) return;
+      if (!currentPath) return;
+      void playViaBlob(el, currentPath).then((ok) => {
+        if (!ok) report("error");
+      });
+    };
+
     // Only report genuine media errors — play() can reject (AbortError,
     // autoplay policy) and error events fire (MEDIA_ERR_ABORTED) while the
     // video keeps working fine.
@@ -41,6 +53,7 @@ export function VideoWindow() {
       switch (p.cmd) {
         case "load": {
           // Skip re-setting an identical src — avoids aborting an in-flight load
+          currentPath = p.path ?? "";
           const src = p.path ? mediaUrl(p.path) : "";
           if (src && el.src !== src) el.src = src;
           if (typeof p.position === "number") el.currentTime = p.position;
@@ -65,7 +78,7 @@ export function VideoWindow() {
 
     el.addEventListener("timeupdate", () => report("timeupdate"));
     el.addEventListener("ended", () => report("ended"));
-    el.addEventListener("error", reportRealError);
+    el.addEventListener("error", tryBlobOrReport);
     el.addEventListener("playing", () => report("playing"));
     el.addEventListener("pause", () => report("pause"));
 

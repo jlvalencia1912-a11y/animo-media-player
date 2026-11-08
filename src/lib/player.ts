@@ -194,12 +194,18 @@ const convertRetries = new Set<string>();
 
 /** Pull the file's bytes over IPC and play from a Blob URL — no localhost
  *  server involved, so firewalls/AV can't break playback. */
-async function playViaBlob(el: HTMLMediaElement, path: string): Promise<boolean> {
+export async function playViaBlob(
+  el: HTMLMediaElement,
+  path: string,
+): Promise<boolean> {
   try {
     const buf = await invoke<ArrayBuffer>("read_media_file", { path });
     el.src = URL.createObjectURL(new Blob([buf]));
     el.load();
-    el.play().catch(() => {});
+    await el.play().catch(() => {});
+    const s = useAppStore.getState();
+    s.setIsPlaying(true);
+    updateMediaSessionPlayback("playing");
     return true;
   } catch {
     return false;

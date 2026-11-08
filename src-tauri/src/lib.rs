@@ -756,8 +756,28 @@ pub fn run() {
         .manage(CloseToTray(std::sync::Mutex::new(true)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .setup(|_app| {
+        .setup(|app| {
             start_media_server();
+
+            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+            let menu = Menu::with_items(app, &[
+                &Submenu::with_items(app, "File", true, &[
+                    &MenuItem::with_id(app, "add-files", "Add local files…", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "add-link", "Add from link…", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, Some("Quit"))?,
+                ])?,
+                &Submenu::with_items(app, "Playback", true, &[
+                    &MenuItem::with_id(app, "toggle-play", "Play / Pause", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "prev", "Previous", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "next", "Next", true, None::<&str>)?,
+                ])?,
+            ])?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app, ev| {
+                let _ = app.emit("amp:menu", ev.id().0.clone());
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
