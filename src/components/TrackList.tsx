@@ -50,13 +50,13 @@ function CoverThumb({ track }: { track: Track }) {
       <img
         src={url}
         alt=""
-        className={`h-6 w-6 shrink-0 rounded object-cover${isVideoPath(track.path) ? " amp-thumb-spin" : ""}`}
+        className="amp-thumb-spin h-6 w-6 shrink-0 rounded object-cover"
       />
     );
   }
   const Icon = isVideoPath(track.path) ? Video : Music;
   return (
-    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated${isVideoPath(track.path) ? " amp-thumb-spin" : ""}`}>
+    <span className="amp-thumb-spin flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated">
       <Icon className="h-3.5 w-3.5 text-muted-foreground" />
     </span>
   );

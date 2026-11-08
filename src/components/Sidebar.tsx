@@ -57,7 +57,7 @@ function NavItem({ icon: Icon, label, active, onClick, indent, highlighted, play
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       {...dropProps}
-      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${
+      className={`amp-side-item flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition ${
         indent ? "pl-10" : ""
       } ${
         highlighted

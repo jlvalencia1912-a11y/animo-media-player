@@ -76,3 +76,12 @@ body.track-dragging video {
 .amp-thumb-spin:hover {
   transform: rotate(360deg);
 }
+
+/* Sidebar items nod gently while hovered */
+@keyframes amp-nod {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.amp-side-item:hover {
+  animation: amp-nod 0.6s ease-in-out infinite;
+}
