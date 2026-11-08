@@ -302,6 +302,18 @@ function bindMediaSessionActions() {
 export async function playTrack(track: Track) {
   const s = useAppStore.getState;
   bindMediaSessionActions();
+
+  // Report the stored path so mismatches (e.g. OneDrive-redirected
+  // folders) are visible instead of a generic load error.
+  const exists = await invoke<boolean>("file_exists", {
+    path: track.path,
+  }).catch(() => true);
+  if (!exists) {
+    s().updateTrack(track.id, { missing: true });
+    s().setPlaybackError(`File not found — ${track.path}`);
+    return;
+  }
+
   const video = isVideoPath(track.path);
 
   if (video && s().videoPopupOpen) {
