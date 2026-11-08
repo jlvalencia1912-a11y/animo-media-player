@@ -21,6 +21,17 @@ const SORT_LABELS: Record<string, string> = {
   trackNumber: "Track #",
 };
 
+/** Leading digits in the filename ("0156_Title.mp3" -> 156) — used when
+ *  files are numbered by name instead of tag. */
+function leadingFileNumber(path: string): number | null {
+  const m = path
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.match(/^0*(\d+)[\s_.-]/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function CoverThumb({ track }: { track: Track }) {
   const [url, setUrl] = useState<string | null | undefined>(() =>
     peekCover(track.id),
@@ -462,7 +473,7 @@ export function TrackList() {
                     />
                   </td>
                   <td className="px-3 py-2.5 text-right text-xs tabular-nums text-muted-foreground">
-                    {t.trackNumber ?? i + 1}
+                    {leadingFileNumber(t.path) ?? t.trackNumber ?? i + 1}
                   </td>
                   <td
                     className="max-w-0 truncate px-3 py-2.5 font-medium"

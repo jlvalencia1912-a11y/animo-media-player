@@ -189,8 +189,10 @@ function bindAudioEvents() {
 }
 
 // Tracks we've already retried via each fallback path (per session)
-const blobRetries = new Set<string>();
 const convertRetries = new Set<string>();
+// Tracks that only play via the IPC Blob transport — skip the media-server
+// URL entirely on future plays.
+const blobPreferred = new Set<string>();
 
 /** Pull the file's bytes over IPC and play from a Blob URL — no localhost
  *  server involved, so firewalls/AV can't break playback. */
@@ -203,6 +205,7 @@ export async function playViaBlob(
     el.src = URL.createObjectURL(new Blob([buf]));
     el.load();
     await el.play().catch(() => {});
+    blobPreferred.add(path);
     const s = useAppStore.getState();
     s.setIsPlaying(true);
     updateMediaSessionPlayback("playing");
@@ -224,12 +227,11 @@ async function handleMediaError(e: Event) {
   if (!t) return;
 
   // Stage 1 — server unreachable (firewall/AV): stream via IPC Blob.
-  if (!blobRetries.has(t.id)) {
-    blobRetries.add(t.id);
-    if (await playViaBlob(el, t.path)) {
-      s.setPlaybackError(null);
-      return;
-    }
+  // Skip when the element is already playing a blob: source (it genuinely
+  // failed, not a transport problem).
+  if (!el.src.startsWith("blob:") && (await playViaBlob(el, t.path))) {
+    s.setPlaybackError(null);
+    return;
   }
 
   // Stage 2 — undecodable audio (e.g. ALAC-in-m4a on WebView2): transcode
@@ -404,8 +406,12 @@ export async function playTrack(track: Track) {
     bindAudioEvents();
   }
 
-  el.src = mediaUrl(track.path);
-  el.currentTime = 0;
+  // Tracks that only play over IPC Blob skip the media-server URL.
+  const useBlob = blobPreferred.has(track.path);
+  if (!useBlob) {
+    el.src = mediaUrl(track.path);
+    el.currentTime = 0;
+  }
   s().setCurrentTrack(track.id);
   s().setPosition(0);
   s().setPlaybackError(null);
@@ -413,7 +419,11 @@ export async function playTrack(track: Track) {
 
   if (ctx?.state === "suspended") await ctx.resume().catch(() => {});
   try {
-    await el.play();
+    if (useBlob) {
+      if (!(await playViaBlob(el, track.path))) throw new Error("blob failed");
+    } else {
+      await el.play();
+    }
     s().setIsPlaying(true);
     s().incrementPlayCount(track.id);
     s().addHistoryEntry({
