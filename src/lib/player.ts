@@ -188,10 +188,25 @@ function bindAudioEvents() {
   audio.addEventListener("pause", () => updateMediaSessionPlayback("paused"));
 }
 
-// Tracks we've already tried transcoding to MP3 (per session)
+// Tracks we've already retried via each fallback path (per session)
+const blobRetries = new Set<string>();
 const convertRetries = new Set<string>();
 
-function handleMediaError(e: Event) {
+/** Pull the file's bytes over IPC and play from a Blob URL — no localhost
+ *  server involved, so firewalls/AV can't break playback. */
+async function playViaBlob(el: HTMLMediaElement, path: string): Promise<boolean> {
+  try {
+    const buf = await invoke<ArrayBuffer>("read_media_file", { path });
+    el.src = URL.createObjectURL(new Blob([buf]));
+    el.load();
+    el.play().catch(() => {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function handleMediaError(e: Event) {
   const el = e.currentTarget as HTMLMediaElement;
   // MEDIA_ERR_ABORTED fires when a new src replaces an in-flight load or a
   // pause() interrupts one — benign, not a real playback failure.
@@ -202,29 +217,33 @@ function handleMediaError(e: Event) {
   const t = s.tracks.find((x) => x.id === s.currentTrackId);
   if (!t) return;
 
-  // Undecodable audio (e.g. ALAC-in-m4a on WebView2) — transcode to MP3
-  // once with the bundled ffmpeg and retry.
-  if (
-    el.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED &&
-    !isVideoPath(t.path) &&
-    !convertRetries.has(t.id)
-  ) {
+  // Stage 1 — server unreachable (firewall/AV): stream via IPC Blob.
+  if (!blobRetries.has(t.id)) {
+    blobRetries.add(t.id);
+    if (await playViaBlob(el, t.path)) {
+      s.setPlaybackError(null);
+      return;
+    }
+  }
+
+  // Stage 2 — undecodable audio (e.g. ALAC-in-m4a on WebView2): transcode
+  // to MP3 once with the bundled ffmpeg and play that.
+  if (!convertRetries.has(t.id) && !isVideoPath(t.path)) {
     convertRetries.add(t.id);
     s.setPlaybackError(`"${t.title}" uses an unsupported codec — converting to MP3…`);
-    invoke<string>("convert_to_mp3", { path: t.path })
-      .then((mp3) => {
-        el.src = mediaUrl(mp3);
-        el.load();
-        el.play().catch(() => {});
-      })
-      .catch(() =>
-        useAppStore
-          .getState()
-          .setPlaybackError(
-            `Could not play "${t.title}" — the file could not be converted.`,
-          ),
-      );
-    return;
+    try {
+      const mp3 = await invoke<string>("convert_to_mp3", { path: t.path });
+      if (await playViaBlob(el, mp3)) {
+        s.setPlaybackError(null);
+        return;
+      }
+      el.src = mediaUrl(mp3);
+      el.load();
+      el.play().catch(() => {});
+      return;
+    } catch {
+      // fall through to generic error
+    }
   }
 
   s.setPlaybackError(

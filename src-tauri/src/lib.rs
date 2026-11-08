@@ -316,6 +316,17 @@ fn file_exists(path: String) -> bool {
     Path::new(&path).is_file()
 }
 
+/// Read a whole media file into memory and return raw bytes over the fast
+/// IPC channel — the frontend plays it via a Blob URL. This is the fallback
+/// when the embedded HTTP server can't be reached (e.g. a firewall blocks
+/// the loopback listener).
+#[tauri::command]
+fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
+    std::fs::read(&path)
+        .map(tauri::ipc::Response::new)
+        .map_err(|e| e.to_string())
+}
+
 
 
 /// Save a mic recording (raw bytes from the webview's MediaRecorder) into
@@ -755,6 +766,7 @@ pub fn run() {
             read_cover,
             write_tags,
             file_exists,
+            read_media_file,
             convert_to_mp3,
             media_port,
             save_recording,
