@@ -92,12 +92,16 @@ export function trackNum(t: { path: string; trackNumber: number | null }) {
   return m ? parseInt(m[1], 10) : t.trackNumber;
 }
 
-/** Occasion labels for filing recordings — selectable in the Recordings view. */
-export const RECORDING_LABELS = [
+/** Time-of-day choices for recordings. */
+export const RECORDING_TIMES = [
   "Morning",
   "Afternoon",
   "Evening",
   "Evening (3rd Day)",
+];
+
+/** Event labels for filing recordings — selectable in the Recordings view. */
+export const RECORDING_EVENTS = [
   "Sabbath",
   "Passover",
   "Unleavened Bread",

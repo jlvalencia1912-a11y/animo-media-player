@@ -95,14 +95,25 @@ export async function stopRecording(): Promise<void> {
   mp3Parts = [];
   if (blob.size === 0) return;
 
+  const store = useAppStore.getState();
+  const ev = store.settings.recordingEvent;
+  const tm = store.settings.recordingTime;
+  const slug = (l: string) =>
+    l
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const ampm = d.getHours() >= 12 ? "PM" : "AM";
   const h12 = d.getHours() % 12 || 12;
-  // recording-MM-DD-YYYY_hh-mm-ss-AM.mp3
+  // sabbath-evening-11-10-2026-03-28-51-PM.mp3
+  const prefix = [ev, tm].filter(Boolean).map(slug).join("-");
   const fileName =
-    `recording-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${d.getFullYear()}` +
-    `_${pad(h12)}-${pad(d.getMinutes())}-${pad(d.getSeconds())}-${ampm}.mp3`;
+    `${prefix ? `${prefix}-` : "recording-"}${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${d.getFullYear()}` +
+    `-${pad(h12)}-${pad(d.getMinutes())}-${pad(d.getSeconds())}-${ampm}.mp3`;
 
   const dir = useAppStore.getState().settings.recordingDir;
   const path = await invoke<string>("save_recording", {
@@ -113,10 +124,9 @@ export async function stopRecording(): Promise<void> {
 
   const result = await scanFiles([path]);
   if (result.files.length) {
-    const store = useAppStore.getState();
-    const label = store.settings.recordingLabel || "Recordings";
+    const label = ev || "Recordings";
 
-    // Find or create the occasion section for non-default labels.
+    // Find or create the event section for non-default labels.
     let sectionId = "recordings";
     if (label !== "Recordings") {
       let sec = store.sections.find((x) => x.name === label);
@@ -140,12 +150,12 @@ export async function stopRecording(): Promise<void> {
       sectionId,
     );
 
-    // Readable title: "Morning · Nov 08, 2026 · 04:32 PM"
+    // Readable title: "Sabbath · Evening · 11/10/2026 4:32 PM"
     const t = store.tracks.find((x) => x.path === path);
     if (t) {
       const stamp = `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${h12}:${pad(d.getMinutes())} ${ampm}`;
       store.updateTrack(t.id, {
-        title: `${label !== "Recordings" ? `${label} · ` : ""}${stamp}`,
+        title: [...[ev, tm].filter(Boolean), stamp].join(" · "),
       });
     }
     useAppStore.getState().setView({ kind: "section", id: sectionId });

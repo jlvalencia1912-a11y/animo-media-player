@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store";
-import { RECORDING_LABELS } from "../types";
+import { RECORDING_EVENTS, RECORDING_TIMES } from "../types";
 import { startRecording, stopRecording } from "../lib/recorder";
 import { playTrack, pause } from "../lib/player";
 import { startTrackDrag } from "../lib/dnd";
@@ -43,13 +43,26 @@ function RecordControls() {
   return (
     <>
       <select
-        value={settings.recordingLabel}
-        onChange={(e) => updateSettings({ recordingLabel: e.target.value })}
-        title="File recording under"
+        value={settings.recordingEvent}
+        onChange={(e) => updateSettings({ recordingEvent: e.target.value })}
+        title="Event"
         className="h-8 rounded-lg border border-border bg-surface-elevated px-2 text-xs text-muted-foreground"
       >
-        <option value="Recordings">Recordings</option>
-        {RECORDING_LABELS.map((l) => (
+        <option value="">Event…</option>
+        {RECORDING_EVENTS.map((l) => (
+          <option key={l} value={l}>
+            {l}
+          </option>
+        ))}
+      </select>
+      <select
+        value={settings.recordingTime}
+        onChange={(e) => updateSettings({ recordingTime: e.target.value })}
+        title="Time of day"
+        className="h-8 rounded-lg border border-border bg-surface-elevated px-2 text-xs text-muted-foreground"
+      >
+        <option value="">Time…</option>
+        {RECORDING_TIMES.map((l) => (
           <option key={l} value={l}>
             {l}
           </option>

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openVideoWindow } from "./videoWindow";
 
 /** Stream media via the app's embedded HTTP server — works on local,
  *  mapped-drive, and UNC network paths on every platform. */
@@ -372,10 +373,15 @@ export async function playTrack(track: Track) {
 
   const video = isVideoPath(track.path);
 
-  if (video && s().videoPopupOpen) {
-    // The pop-up window owns the <video> element — hand it the file.
+  if (video) {
+    // Always play videos in the pop-out window so the main window stays
+    // free for browsing playlists and songs.
     audio?.pause();
     videoEl?.pause();
+    if (!s().videoPopupOpen) {
+      s().setVideoPopupOpen(true);
+      void openVideoWindow();
+    }
     sendVideoCmd({ cmd: "load", path: track.path, position: 0, autoplay: true });
     s().setCurrentTrack(track.id);
     s().setPosition(0);
