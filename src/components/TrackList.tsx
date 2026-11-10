@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff } from "lucide-react";
 import { useAppStore } from "../store";
+import { RECORDING_LABELS } from "../types";
+import { startRecording, stopRecording } from "../lib/recorder";
 import { playTrack, pause } from "../lib/player";
 import { startTrackDrag } from "../lib/dnd";
 import { getCover, peekCover } from "../lib/cover";
@@ -30,6 +32,49 @@ function leadingFileNumber(path: string): number | null {
     .pop()
     ?.match(/^0*(\d+)[\s_.-]/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+/** Record button + occasion picker shown inside the Recordings view. */
+function RecordControls() {
+  const recording = useAppStore((s) => s.recording);
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <select
+        value={settings.recordingLabel}
+        onChange={(e) => updateSettings({ recordingLabel: e.target.value })}
+        title="File recording under"
+        className="h-8 rounded-lg border border-border bg-surface-elevated px-2 text-xs text-muted-foreground"
+      >
+        <option value="Recordings">Recordings</option>
+        {RECORDING_LABELS.map((l) => (
+          <option key={l} value={l}>
+            {l}
+          </option>
+        ))}
+      </select>
+      <button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            if (recording) await stopRecording();
+            else await startRecording(settings.micDeviceId);
+          } finally {
+            setBusy(false);
+          }
+        }}
+        aria-label={recording ? "Stop recording" : "Start recording"}
+        title={recording ? "Stop recording" : "Start recording"}
+        className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2.5 text-xs text-muted-foreground transition hover:text-foreground"
+      >
+        <span className={`text-red-500 ${recording ? "animate-pulse" : ""}`}>●</span>
+        {recording ? "Stop" : "Record"}
+      </button>
+    </>
+  );
 }
 
 function CoverThumb({ track }: { track: Track }) {
@@ -322,6 +367,9 @@ export function TrackList() {
                 </select>
               )}
             </>
+          )}
+          {view.kind === "section" && view.id === "recordings" && (
+            <RecordControls />
           )}
           <button
             onClick={() => setShowLinkDialog(true)}

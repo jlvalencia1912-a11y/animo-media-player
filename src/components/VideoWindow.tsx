@@ -6,7 +6,7 @@ import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { mediaUrl, playViaBlob } from "../lib/player";
 
 interface VideoCmd {
-  cmd: "load" | "play" | "pause" | "seek" | "volume";
+  cmd: "load" | "play" | "pause" | "seek" | "volume" | "fadeout";
   path?: string;
   position?: number;
   volume?: number;
@@ -68,6 +68,22 @@ export function VideoWindow() {
         case "pause":
           el.pause();
           break;
+        case "fadeout": {
+          // Smoothly ramp volume down, then pause — used when an audio
+          // track takes over while the video was playing.
+          const start = el.volume;
+          let i = 0;
+          const t = setInterval(() => {
+            i++;
+            el.volume = Math.max(0, start * (1 - i / 20));
+            if (i >= 20) {
+              clearInterval(t);
+              el.pause();
+              el.volume = start;
+            }
+          }, 50);
+          break;
+        }
         case "seek":
           if (typeof p.value === "number") el.currentTime = p.value;
           break;

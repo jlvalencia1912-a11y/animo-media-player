@@ -113,16 +113,42 @@ export async function stopRecording(): Promise<void> {
 
   const result = await scanFiles([path]);
   if (result.files.length) {
-    await addFilesAsTracks(result.files, "recordings");
+    const store = useAppStore.getState();
+    const label = store.settings.recordingLabel || "Recordings";
+
+    // Find or create the occasion section for non-default labels.
+    let sectionId = "recordings";
+    if (label !== "Recordings") {
+      let sec = store.sections.find((x) => x.name === label);
+      if (!sec) {
+        sec = {
+          id: `rec-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          name: label,
+          icon: "mic",
+          parentId: null,
+        };
+        store.setSections([...store.sections, sec]);
+      }
+      sectionId = sec.id;
+    }
+
+    await addFilesAsTracks(result.files, sectionId);
     // Belt & suspenders: if the file was somehow already in the library,
-    // move it into Recordings so it never leaks into All Songs.
-    useAppStore
-      .getState()
-      .moveTracksToSection(
-        result.files.map((f) => f.path),
-        "recordings",
-      );
-    useAppStore.getState().setView({ kind: "section", id: "recordings" });
+    // move it into the target section so it never leaks into All Songs.
+    store.moveTracksToSection(
+      result.files.map((f) => f.path),
+      sectionId,
+    );
+
+    // Readable title: "Morning · Nov 08, 2026 · 04:32 PM"
+    const t = store.tracks.find((x) => x.path === path);
+    if (t) {
+      const stamp = `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${h12}:${pad(d.getMinutes())} ${ampm}`;
+      store.updateTrack(t.id, {
+        title: `${label !== "Recordings" ? `${label} · ` : ""}${stamp}`,
+      });
+    }
+    useAppStore.getState().setView({ kind: "section", id: sectionId });
   }
 }
 

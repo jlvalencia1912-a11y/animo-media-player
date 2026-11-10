@@ -83,6 +83,7 @@ interface AppState {
     micDeviceId: string;
     showCovers: boolean;
     theme: "dark" | "light";
+    recordingLabel: string;
     /** Export folder for mic recordings; empty = ~/Desktop/Animo Recordings */
     recordingDir: string;
   };
@@ -221,6 +222,7 @@ export const useAppStore = create<AppState>()(
         micDeviceId: "default",
         showCovers: true,
         theme: "dark",
+        recordingLabel: "Recordings",
         recordingDir: "",
       },
 

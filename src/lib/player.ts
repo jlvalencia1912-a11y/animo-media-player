@@ -402,7 +402,19 @@ export async function playTrack(track: Track) {
   if (video) {
     audio?.pause();
   } else {
-    getVideoEl()?.pause();
+    {
+      const vel = getVideoEl();
+      if (vel && !vel.paused) {
+        // Smooth fade-out before handing over to the song
+        rampVolume(vel, 0, () => {
+          vel.pause();
+          vel.volume = s().volume;
+        });
+      } else {
+        vel?.pause();
+      }
+      if (s().videoPopupOpen) sendVideoCmd({ cmd: "fadeout" });
+    }
     bindAudioEvents();
   }
 

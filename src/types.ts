@@ -91,3 +91,27 @@ export function trackNum(t: { path: string; trackNumber: number | null }) {
     ?.match(/^0*(\d+)[\s_.-]/);
   return m ? parseInt(m[1], 10) : t.trackNumber;
 }
+
+/** Occasion labels for filing recordings — selectable in the Recordings view. */
+export const RECORDING_LABELS = [
+  "Morning",
+  "Afternoon",
+  "Evening",
+  "Evening (3rd Day)",
+  "Sabbath",
+  "Passover",
+  "Unleavened Bread",
+  "Resurrection Day",
+  "2nd Passover",
+  "Ascension Day",
+  "Pentecost",
+  "Trumpets",
+  "Prayer Week",
+  "Atonement",
+  "Tabernacles",
+  "Preaching Week",
+  "Last & Greatest Day",
+  "Mother's Coming",
+  "Father's Coming",
+  "Heavenly Parents Day",
+];
