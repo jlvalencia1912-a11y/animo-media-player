@@ -182,7 +182,8 @@ function bindAudioEvents() {
       audio!.play().catch(() => {});
       return;
     }
-    next();
+    if (s.autoAdvance) next();
+    else s.setIsPlaying(false);
   });
   audio.addEventListener("error", handleMediaError);
   audio.addEventListener("playing", () => updateMediaSessionPlayback("playing"));
@@ -279,7 +280,8 @@ function bindVideoEvents(el: HTMLVideoElement) {
       el.play().catch(() => {});
       return;
     }
-    next();
+    if (s.autoAdvance) next();
+    else s.setIsPlaying(false);
   });
   el.addEventListener("error", handleMediaError);
   el.addEventListener("playing", () => updateMediaSessionPlayback("playing"));

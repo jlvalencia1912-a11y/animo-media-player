@@ -103,19 +103,23 @@ export function Sidebar() {
   const topLevel = sections.filter((s) => !s.parentId);
   const childrenOf = (id: string) => sections.filter((s) => s.parentId === id);
 
-  // Section the currently-playing track lives in
-  const playingSectionId = tracks.find((t) => t.id === currentTrackId)?.sectionId ?? null;
+  // Section the currently-playing track lives in — ordered sections own
+  // membership via trackIds, so check those too.
+  const playingTrack = tracks.find((t) => t.id === currentTrackId);
+  const playingSectionId =
+    playingTrack?.sectionId ??
+    sections.find((s) => s.trackIds?.includes(currentTrackId ?? ""))?.id ??
+    null;
 
   // Drop targets: the data-drop-* attrs are hit-tested by both the
   // pointer-based track drag and the OS file-drop listener (see lib/dnd.ts).
-  const dropPropsFor = (
-    target: Exclude<DropTarget, { kind: "view" }>,
-  ): Record<string, string> =>
+  type SidebarDrop = Extract<DropTarget, { id: string }>;
+  const dropPropsFor = (target: SidebarDrop): Record<string, string> =>
     target.kind === "section"
       ? { "data-drop-section": target.id }
       : { "data-drop-playlist": target.id };
 
-  const highlighted = (target: Exclude<DropTarget, { kind: "view" }>) =>
+  const highlighted = (target: SidebarDrop) =>
     dropTarget?.kind === target.kind &&
     "id" in dropTarget &&
     dropTarget.id === target.id;
@@ -131,7 +135,6 @@ export function Sidebar() {
       <NavItem icon={Library} label="All Songs" active={view.kind === "all"} onClick={() => setView({ kind: "all" })} />
       <NavItem icon={Video} label="All Videos" active={view.kind === "videos"} onClick={() => setView({ kind: "videos" })} />
       <NavItem icon={Clock} label="Recently Added" active={view.kind === "recent-added"} onClick={() => setView({ kind: "recent-added" })} />
-      <NavItem icon={History} label="Recently Played" active={view.kind === "recent-played"} onClick={() => setView({ kind: "recent-played" })} />
 
       <div className="mb-1 mt-4 flex items-center justify-between px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         <span>Sections</span>

@@ -30,12 +30,21 @@ export function resolveDropTarget(
   return { kind: "section", id: "new-songs" };
 }
 
-const sameTarget = (a: DropTarget | null, b: DropTarget | null) =>
-  a?.kind === b?.kind &&
-  (!a || !b || !("id" in a) || ("id" in b && a.id === b.id));
+const sameTarget = (a: DropTarget | null, b: DropTarget | null) => {
+  if (a?.kind !== b?.kind) return false;
+  if (!a || !b) return true;
+  if (a.kind === "reorder" && b.kind === "reorder")
+    return a.beforeId === b.beforeId;
+  if ("id" in a && "id" in b) return a.id === b.id;
+  return true;
+};
 
 function targetFromPoint(x: number, y: number): DropTarget | null {
   const el = document.elementFromPoint(x, y);
+  const row = el?.closest<HTMLElement>("[data-reorder-before]");
+  if (row) {
+    return { kind: "reorder", beforeId: row.dataset.reorderBefore || null };
+  }
   const hit = el?.closest<HTMLElement>(
     "[data-drop-section],[data-drop-playlist],[data-drop-view]",
   );
@@ -80,11 +89,18 @@ export function startTrackDrag(ids: string[], startX: number, startY: number) {
     if (!dragging || !e) return;
     const target = targetFromPoint(e.clientX, e.clientY);
     if (!target) return;
+    if (target.kind === "reorder") {
+      const v = s.view;
+      if (v.kind === "section") {
+        s.reorderSectionTracks(v.id, ids, target.beforeId);
+      }
+      return;
+    }
     const resolved = resolveDropTarget(target);
     if (resolved.kind === "section") {
       s.moveTracksToSection(ids, resolved.id);
       s.setView({ kind: "section", id: resolved.id });
-    } else {
+    } else if (resolved.kind === "playlist") {
       s.addTracksToPlaylist(resolved.id, ids);
       s.setView({ kind: "playlist", id: resolved.id });
     }
@@ -103,11 +119,15 @@ export async function importPathsToTarget(
   target: DropTarget,
 ): Promise<void> {
   const store = useAppStore.getState();
-  const resolved = resolveDropTarget(target);
+  // A reorder row only makes sense for track drags — treat OS file drops
+  // on the list as drops on the current view.
+  const t = target.kind === "reorder" ? ({ kind: "view" } as const) : target;
+  const resolved = resolveDropTarget(t);
   // Dropping on the generic views (All Songs, Recents) has no section of
-  // its own — audio lands in New Songs and video in Videos.
+  // its own — audio lands in New Songs and video stays unsectioned (it
+  // still shows up under All Videos).
   const genericView =
-    target.kind === "view" &&
+    t.kind === "view" &&
     !["section", "playlist"].includes(store.view.kind);
 
   const media = paths.filter(isMediaPath);
@@ -124,25 +144,27 @@ export async function importPathsToTarget(
   }
   if (!files.length) return;
 
-  // Destination section per file; drops onto a specific section (or while
-  // viewing one) honor that section for everything.
-  const destFor = (f: ScannedFile): string => {
+  // Destination section per file (null = unsectioned); drops onto a
+  // specific section (or while viewing one) honor that section for
+  // everything. Ordered sections get the files added to their list (see
+  // addFilesAsTracks) while audio keeps New Songs as its home section.
+  const destFor = (f: ScannedFile): string | null => {
     if (resolved.kind === "playlist") {
-      return isVideoPath(f.path) ? "videos" : "new-songs";
+      return isVideoPath(f.path) ? null : "new-songs";
     }
-    if (genericView && isVideoPath(f.path)) return "videos";
-    return resolved.id;
+    if (genericView && isVideoPath(f.path)) return null;
+    return resolved.kind === "section" ? resolved.id : null;
   };
 
-  const byDest = new Map<string, ScannedFile[]>();
+  const byDest = new Map<string | null, ScannedFile[]>();
   for (const f of files) {
     const d = destFor(f);
     byDest.set(d, [...(byDest.get(d) ?? []), f]);
   }
   for (const [dest, group] of byDest) {
     await addFilesAsTracks(group, dest);
-    if (resolved.kind === "section") {
-      // Files already in the library get moved to the drop section too.
+    if (dest && resolved.kind === "section") {
+      // Files already in the library get moved/copied to the drop section too.
       useAppStore.getState().moveTracksToSection(
         group.map((f) => f.path),
         dest,
@@ -155,11 +177,17 @@ export async function importPathsToTarget(
     store.addTracksToPlaylist(resolved.id, allIds);
     useAppStore.getState().setView({ kind: "playlist", id: resolved.id });
   } else {
-    // Show the section most files landed in.
-    const primary = byDest.has(resolved.id)
-      ? resolved.id
-      : [...byDest.keys()][0];
-    useAppStore.getState().setView({ kind: "section", id: primary });
+    // Show the section most files landed in (unsectioned-only drops —
+    // videos — show the All Videos view).
+    const primary =
+      resolved.kind === "section" && byDest.has(resolved.id)
+        ? resolved.id
+        : [...byDest.keys()][0];
+    useAppStore
+      .getState()
+      .setView(
+        primary ? { kind: "section", id: primary } : { kind: "videos" },
+      );
   }
 }
 

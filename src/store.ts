@@ -14,14 +14,16 @@ export type ViewMode =
   | { kind: "section"; id: string }
   | { kind: "playlist"; id: string }
   | { kind: "recent-added" }
-  | { kind: "recent-played" }
   | { kind: "videos" }
   | { kind: "all" };
 
-/** Where a drag is hovering. "view" resolves to whatever the track list shows. */
+/** Where a drag is hovering. "view" resolves to whatever the track list shows;
+ *  "reorder" is a row in an ordered section (insert before `beforeId`,
+ *  null = append at end). */
 export type DropTarget =
   | { kind: "section"; id: string }
   | { kind: "playlist"; id: string }
+  | { kind: "reorder"; beforeId: string | null }
   | { kind: "view" };
 
 interface AppState {
@@ -43,6 +45,9 @@ interface AppState {
   repeat: RepeatMode;
   shuffle: boolean;
   queue: string[];
+  /** false = don't auto-advance when a track ends (ordered setlists —
+   *  Morning/Afternoon/Evening — wait for a manual play). */
+  autoAdvance: boolean;
 
   // Playback health / selection
   playbackError: string | null;
@@ -110,7 +115,7 @@ interface AppState {
   setMuted: (m: boolean) => void;
   setRepeat: (r: RepeatMode) => void;
   setShuffle: (s: boolean) => void;
-  setQueue: (q: string[]) => void;
+  setQueue: (q: string[], autoAdvance?: boolean) => void;
   updateSettings: (s: Partial<AppState["settings"]>) => void;
   setMonitoredFolders: (f: MonitoredFolder[]) => void;
   setPlaylists: (p: Playlist[]) => void;
@@ -118,6 +123,15 @@ interface AppState {
   addTracksToPlaylist: (playlistId: string, trackIds: string[]) => void;
   deletePlaylist: (playlistId: string) => void;
   moveTracksToSection: (trackIds: string[], sectionId: string) => void;
+  reorderSectionTracks: (
+    sectionId: string,
+    dragIds: string[],
+    beforeId: string | null,
+  ) => void;
+  removeTracksFromOrderedSection: (
+    sectionId: string,
+    trackIds: string[],
+  ) => void;
   unassignTracksFromSection: (trackIds: string[]) => void;
   removeTracksFromPlaylist: (playlistId: string, trackIds: string[]) => void;
   removeTracks: (trackIds: string[]) => void;
@@ -192,6 +206,7 @@ export const useAppStore = create<AppState>()(
       repeat: "off",
       shuffle: false,
       queue: [],
+      autoAdvance: true,
 
       playbackError: null,
       selectedTrackIds: [],
@@ -274,7 +289,7 @@ export const useAppStore = create<AppState>()(
       setMuted: (muted) => set({ muted }),
       setRepeat: (repeat) => set({ repeat }),
       setShuffle: (shuffle) => set({ shuffle }),
-      setQueue: (queue) => set({ queue }),
+      setQueue: (queue, autoAdvance = true) => set({ queue, autoAdvance }),
       updateSettings: (s) => set({ settings: { ...get().settings, ...s } }),
       setMonitoredFolders: (monitoredFolders) => set({ monitoredFolders }),
       setPlaylists: (playlists) => set({ playlists }),
@@ -308,11 +323,75 @@ export const useAppStore = create<AppState>()(
               : v,
         });
       },
-      moveTracksToSection: (trackIds, sectionId) =>
+      moveTracksToSection: (trackIds, sectionId) => {
+        const sec = get().sections.find((s) => s.id === sectionId);
+        if (sec?.trackIds) {
+          // Ordered sections are setlists — dropping copies the tracks in
+          // (appended in order) without touching their home section.
+          set({
+            sections: get().sections.map((s) =>
+              s.id === sectionId
+                ? {
+                    ...s,
+                    trackIds: [
+                      ...(s.trackIds ?? []),
+                      ...trackIds.filter(
+                        (id) => !(s.trackIds ?? []).includes(id),
+                      ),
+                    ],
+                  }
+                : s,
+            ),
+          });
+          return;
+        }
         set({
           tracks: get().tracks.map((t) =>
             trackIds.includes(t.id) ? { ...t, sectionId } : t,
           ),
+        });
+      },
+      reorderSectionTracks: (sectionId, dragIds, beforeId) => {
+        // Dropping onto a dragged row changes nothing.
+        if (beforeId && dragIds.includes(beforeId)) return;
+        set({
+          sections: get().sections.map((s) => {
+            if (s.id !== sectionId || !s.trackIds) return s;
+            const moved = s.trackIds.filter((id) => dragIds.includes(id));
+            // Stragglers (membership via sectionId, not yet in the list)
+            // join the dragged block in drag order.
+            for (const id of dragIds) {
+              if (!moved.includes(id) && !s.trackIds.includes(id)) {
+                moved.push(id);
+              }
+            }
+            const rest = s.trackIds.filter((id) => !dragIds.includes(id));
+            const at = beforeId ? rest.indexOf(beforeId) : -1;
+            const idx = at === -1 ? rest.length : at;
+            return {
+              ...s,
+              trackIds: [
+                ...rest.slice(0, idx),
+                ...moved,
+                ...rest.slice(idx),
+              ],
+            };
+          }),
+        });
+      },
+      removeTracksFromOrderedSection: (sectionId, trackIds) =>
+        set({
+          sections: get().sections.map((s) =>
+            s.id === sectionId && s.trackIds
+              ? {
+                  ...s,
+                  trackIds: s.trackIds.filter(
+                    (id) => !trackIds.includes(id),
+                  ),
+                }
+              : s,
+          ),
+          selectedTrackIds: [],
         }),
       // Remove tracks from their section but keep them in the library.
       unassignTracksFromSection: (trackIds) =>
@@ -344,6 +423,16 @@ export const useAppStore = create<AppState>()(
             ...p,
             trackIds: p.trackIds.filter((id) => !trackIds.includes(id)),
           })),
+          sections: s.sections.map((sec) =>
+            sec.trackIds
+              ? {
+                  ...sec,
+                  trackIds: sec.trackIds.filter(
+                    (id) => !trackIds.includes(id),
+                  ),
+                }
+              : sec,
+          ),
           queue: s.queue.filter((id) => !trackIds.includes(id)),
           selectedTrackIds: [],
           ...(removedCurrent
@@ -396,16 +485,46 @@ export const useAppStore = create<AppState>()(
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<AppState>;
+        // Built-in sections that existed in saved state but were removed
+        // from DEFAULT_SECTIONS (videos live in the All Videos view now).
+        const REMOVED_SECTIONS = new Set(["videos"]);
         // Union persisted sections with defaults so newly-added built-in
-        // sections (e.g. Videos) appear for existing users.
-        const sections = [...(p.sections ?? current.sections)];
+        // sections appear for existing users; spread defaults first so keys
+        // added since (e.g. trackIds on ordered sections) get filled in.
+        const sections = (p.sections ?? current.sections)
+          .filter((s) => !REMOVED_SECTIONS.has(s.id))
+          .map((s) => {
+            const d = DEFAULT_SECTIONS.find((x) => x.id === s.id);
+            return d ? { ...d, ...s } : s;
+          });
         for (const d of DEFAULT_SECTIONS) {
-          if (!sections.some((s) => s.id === d.id)) sections.push(d);
+          if (!sections.some((s) => s.id === d.id)) sections.push({ ...d });
         }
+        // Migrate tracks: ordered sections own membership via trackIds, so
+        // stale sectionIds pointing at them fold into the list; ids of
+        // removed sections (e.g. "videos") become unsectioned.
+        const validIds = new Set(sections.map((s) => s.id));
+        const orderedById = new Map(
+          sections.filter((s) => s.trackIds).map((s) => [s.id, s]),
+        );
+        const tracks = (p.tracks ?? current.tracks).map((t) => {
+          const sec = t.sectionId ? orderedById.get(t.sectionId) : undefined;
+          if (sec) {
+            if (!sec.trackIds!.includes(t.id)) {
+              sec.trackIds = [...sec.trackIds!, t.id];
+            }
+            return { ...t, sectionId: null };
+          }
+          if (t.sectionId !== null && !validIds.has(t.sectionId)) {
+            return { ...t, sectionId: null };
+          }
+          return t;
+        });
         return {
           ...current,
           ...p,
           sections,
+          tracks,
           // Fill new settings keys with defaults for existing saved settings
           settings: { ...current.settings, ...p.settings },
         };

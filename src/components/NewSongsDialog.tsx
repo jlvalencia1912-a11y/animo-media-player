@@ -87,7 +87,11 @@ export function NewSongsDialog() {
       sectionId,
       overrides,
     );
-    if (added === 0 && skipped > 0) {
+    // Ordered sections copy tracks into their list — files already in the
+    // library still get added to the section order, so it's not an error.
+    const isOrdered =
+      sections.find((s) => s.id === sectionId)?.trackIds !== undefined;
+    if (added === 0 && skipped > 0 && !isOrdered) {
       setError(
         skipped === 1
           ? "That file is already in your library — nothing was added."

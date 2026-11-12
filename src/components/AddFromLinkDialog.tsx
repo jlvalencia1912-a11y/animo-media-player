@@ -98,12 +98,8 @@ export function AddFromLinkDialog() {
         setDlError("Downloaded, but the file could not be read.");
         return;
       }
-      await addFilesAsTracks(result.files, "videos");
+      await addFilesAsTracks(result.files, null);
       const s = useAppStore.getState();
-      s.moveTracksToSection(
-        result.files.map((f) => f.path),
-        "videos",
-      );
       s.setView({ kind: "videos" });
       close();
     } catch (e) {

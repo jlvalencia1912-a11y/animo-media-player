@@ -40,8 +40,8 @@ function toTrack(f: ScannedFile, prev: Track | undefined): Track {
     playCount: prev?.playCount ?? 0,
     lastPlayedAt: prev?.lastPlayedAt ?? null,
     // preserve user-assigned section (including "unsectioned"); new files
-    // land in New Songs / Videos
-    sectionId: prev ? prev.sectionId : isVideoPath(f.path) ? "videos" : "new-songs",
+    // land in New Songs (audio) or unsectioned (video — see All Videos)
+    sectionId: prev ? prev.sectionId : isVideoPath(f.path) ? null : "new-songs",
     missing: false,
   };
 }
@@ -105,15 +105,20 @@ export interface AddResult {
 }
 
 /** Add scanned files to the library. Files already in the library (by path)
- *  are skipped rather than duplicated. Returns counts for UI feedback. */
+ *  are skipped rather than duplicated. `sectionId` null = unsectioned.
+ *  Ordered sections (trackIds) keep a list instead: files get New Songs /
+ *  unsectioned as their home and are appended to the section order.
+ *  Returns counts for UI feedback. */
 export async function addFilesAsTracks(
   files: ScannedFile[],
-  sectionId: string,
+  sectionId: string | null,
   overrides?: Map<string, { title?: string; trackNumber?: number | null }>,
 ): Promise<AddResult> {
-  const existing = new Set(
-    useAppStore.getState().tracks.map((t) => norm(t.id)),
-  );
+  const state = useAppStore.getState();
+  const existing = new Set(state.tracks.map((t) => norm(t.id)));
+  const ordered = sectionId
+    ? state.sections.find((s) => s.id === sectionId)?.trackIds
+    : undefined;
   const fresh = files.filter((f) => !existing.has(norm(f.path)));
   const tracks = fresh.map((f) => {
     const o = overrides?.get(f.path);
@@ -122,12 +127,23 @@ export async function addFilesAsTracks(
       ...t,
       title: o?.title ?? t.title,
       trackNumber: o?.trackNumber !== undefined ? o.trackNumber : t.trackNumber,
-      sectionId,
+      sectionId: ordered
+        ? isVideoPath(f.path)
+          ? null
+          : "new-songs"
+        : sectionId,
       missing: false,
     };
   });
   if (tracks.length > 0) {
-    useAppStore.getState().addTracks(tracks);
+    state.addTracks(tracks);
+  }
+  if (ordered && sectionId) {
+    // Copies every requested path into the section's ordered list.
+    state.moveTracksToSection(
+      files.map((f) => f.path),
+      sectionId,
+    );
   }
   return { added: tracks.length, skipped: files.length - fresh.length };
 }

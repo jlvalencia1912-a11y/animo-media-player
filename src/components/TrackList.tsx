@@ -144,6 +144,7 @@ export function TrackList() {
     dropTarget,
     removeTracks,
     removeTracksFromPlaylist,
+    removeTracksFromOrderedSection,
     unassignTracksFromSection,
     setView,
     settings,
@@ -161,30 +162,53 @@ export function TrackList() {
       return playlists.find((p) => p.id === view.id)?.name ?? "Playlist";
     }
     if (view.kind === "recent-added") return "Recently Added";
-    if (view.kind === "recent-played") return "Recently Played";
     if (view.kind === "videos") return "Videos";
     return "All Songs";
   }, [view, sections, playlists]);
 
+  // Ordered sections (Sabbath: Morning/Afternoon/Evening) keep their own
+  // ordered trackIds list instead of relying on sort + sectionId.
+  const orderedSection =
+    view.kind === "section"
+      ? sections.find((s) => s.id === view.id && s.trackIds)
+      : undefined;
+
   const visible = useMemo(() => {
     let list = tracks;
     if (view.kind === "section") {
-      const childIds = sections
-        .filter((s) => s.parentId === view.id)
-        .map((s) => s.id);
-      const ids = new Set([view.id, ...childIds]);
-      // The Recordings section also catches files under the recordings
-      // folder even if their sectionId got out of sync.
-      list =
-        view.id === "recordings"
-          ? list.filter(
-              (t) =>
-                (t.sectionId !== null && ids.has(t.sectionId)) ||
-                isRecordingTrack(t, settings.recordingDir),
-            )
-          : list.filter(
-              (t) => t.sectionId !== null && ids.has(t.sectionId),
-            );
+      if (orderedSection) {
+        const order = new Map(
+          orderedSection.trackIds!.map((id, i) => [id, i] as const),
+        );
+        list = list
+          .filter((t) => order.has(t.id) || t.sectionId === view.id)
+          .sort(
+            (a, b) =>
+              (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+              (order.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+          );
+      } else {
+        const children = sections.filter((s) => s.parentId === view.id);
+        const ids = new Set([view.id, ...children.map((s) => s.id)]);
+        // Ordered children pull members in via their trackIds lists.
+        const listed = new Set(
+          children.flatMap((s) => s.trackIds ?? []),
+        );
+        // The Recordings section also catches files under the recordings
+        // folder even if their sectionId got out of sync.
+        list =
+          view.id === "recordings"
+            ? list.filter(
+                (t) =>
+                  (t.sectionId !== null && ids.has(t.sectionId)) ||
+                  isRecordingTrack(t, settings.recordingDir),
+              )
+            : list.filter(
+                (t) =>
+                  (t.sectionId !== null && ids.has(t.sectionId)) ||
+                  listed.has(t.id),
+              );
+      }
     } else if (view.kind === "all") {
       // Library tabs keep audio and video separated; recordings live only
       // in the Recordings section
@@ -199,11 +223,6 @@ export function TrackList() {
       list = list.filter((t) => order.has(t.id));
     } else if (view.kind === "recent-added") {
       list = [...list].sort((a, b) => b.addedAt - a.addedAt).slice(0, 100);
-    } else if (view.kind === "recent-played") {
-      list = list
-        .filter((t) => t.lastPlayedAt)
-        .sort((a, b) => (b.lastPlayedAt ?? 0) - (a.lastPlayedAt ?? 0))
-        .slice(0, 100);
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -214,7 +233,7 @@ export function TrackList() {
           t.album.toLowerCase().includes(q),
       );
     }
-    if (view.kind !== "recent-added" && view.kind !== "recent-played") {
+    if (view.kind !== "recent-added" && !orderedSection) {
       const dir = sortDir === "asc" ? 1 : -1;
       list = [...list].sort((a, b) => {
         const numSort = sortBy === "trackNumber";
@@ -233,10 +252,12 @@ export function TrackList() {
       });
     }
     return list;
-  }, [tracks, view, search, sortBy, sortDir, sections, playlists]);
+  }, [tracks, view, search, sortBy, sortDir, sections, playlists, orderedSection]);
 
   const startPlayback = (track: Track) => {
-    setQueue(visible.map((t) => t.id));
+    // Ordered setlists (Morning/Afternoon/Evening) don't auto-advance —
+    // each song waits for a manual play.
+    setQueue(visible.map((t) => t.id), !orderedSection);
     playTrack(track);
   };
 
@@ -247,8 +268,20 @@ export function TrackList() {
       return;
     }
     if (view.kind === "section" && view.id !== "recordings") {
+      if (orderedSection) {
+        // Ordered setlists — remove from the list only.
+        removeTracksFromOrderedSection(view.id, selectedTrackIds);
+        return;
+      }
       // Keep the tracks in the library — just unassign this section.
       unassignTracksFromSection(selectedTrackIds);
+      // Dropping from a parent (e.g. Sabbath) also drops it from any
+      // ordered child setlists it appears in.
+      for (const kid of sections.filter(
+        (s) => s.parentId === view.id && s.trackIds,
+      )) {
+        removeTracksFromOrderedSection(kid.id, selectedTrackIds);
+      }
       return;
     }
     if (!confirmingRemove) {
@@ -416,33 +449,41 @@ export function TrackList() {
               className="h-8 w-56 rounded-lg border border-border bg-surface-elevated pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-accent focus:outline-none"
             />
           </div>
-          <button
-            onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}
-            aria-label={`Sort direction: ${sortDir}`}
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2.5 text-xs text-muted-foreground transition hover:text-foreground"
-          >
-            <ArrowUpDown className="h-3.5 w-3.5" />
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-              onClick={(e) => e.stopPropagation()}
-              aria-label="Sort by"
-              className="cursor-pointer bg-transparent text-xs focus:outline-none"
+          {!orderedSection && (
+            <button
+              onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}
+              aria-label={`Sort direction: ${sortDir}`}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2.5 text-xs text-muted-foreground transition hover:text-foreground"
             >
-              {Object.entries(SORT_LABELS).map(([k, v]) => (
-                <option key={k} value={k} className="bg-surface-elevated">
-                  {v}
-                </option>
-              ))}
-            </select>
-          </button>
+              <ArrowUpDown className="h-3.5 w-3.5" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Sort by"
+                className="cursor-pointer bg-transparent text-xs focus:outline-none"
+              >
+                {Object.entries(SORT_LABELS).map(([k, v]) => (
+                  <option key={k} value={k} className="bg-surface-elevated">
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* List — also a drop zone for OS files (target = current view) */}
+      {/* List — also a drop zone for OS files (target = current view).
+          In ordered sections rows are reorder targets; empty space at the
+          end of the container means "append at end". */}
       <div
+        data-reorder-before={orderedSection ? "" : undefined}
         className={`min-h-0 flex-1 overflow-y-auto transition ${
-          dropTarget?.kind === "view" ? "ring-2 ring-inset ring-accent" : ""
+          dropTarget?.kind === "view" ||
+          (dropTarget?.kind === "reorder" && dropTarget.beforeId === null)
+            ? "ring-2 ring-inset ring-accent"
+            : ""
         }`}
       >
         {visible.length === 0 ? (
@@ -508,6 +549,7 @@ export function TrackList() {
               {visible.map((t, i) => (
                 <tr
                   key={t.id}
+                  data-reorder-before={orderedSection ? t.id : undefined}
                   onDoubleClick={() => startPlayback(t)}
                   onClick={(e) => onRowClick(e, t, i)}
                   onPointerDown={(e) => beginDrag(e, t)}
@@ -518,12 +560,21 @@ export function TrackList() {
                       : t.id === currentTrackId
                         ? "bg-accent/10 text-foreground"
                         : "text-foreground/90 hover:bg-surface-hover"
+                  } ${
+                    dropTarget?.kind === "reorder" &&
+                    dropTarget.beforeId === t.id
+                      ? "shadow-[inset_0_2px_0_0_var(--color-accent)]"
+                      : ""
                   }`}
                 >
                   <td className="px-1 py-2.5">
                     <span
                       aria-label={`Drag ${t.title}`}
-                      title="Drag to a section or playlist — ⌘/⇧-click rows to select several"
+                      title={
+                        orderedSection
+                          ? "Drag to reorder — or drop on a section/playlist in the sidebar"
+                          : "Drag to a section or playlist — ⌘/⇧-click rows to select several"
+                      }
                       className="flex cursor-grab touch-none items-center justify-center text-muted-foreground/40 transition group-hover:text-muted-foreground active:cursor-grabbing"
                     >
                       <GripVertical className="h-4 w-4" />
@@ -539,7 +590,9 @@ export function TrackList() {
                     />
                   </td>
                   <td className="px-3 py-2.5 text-right text-xs tabular-nums text-muted-foreground">
-                    {leadingFileNumber(t.path) ?? t.trackNumber ?? i + 1}
+                    {orderedSection
+                      ? i + 1
+                      : (leadingFileNumber(t.path) ?? t.trackNumber ?? i + 1)}
                   </td>
                   <td
                     className="max-w-0 truncate px-3 py-2.5 font-medium"

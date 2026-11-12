@@ -112,8 +112,10 @@ export function startVideoBridge(): void {
         if (s.repeat === "one") {
           sendCmd({ cmd: "seek", value: 0 });
           sendCmd({ cmd: "play" });
-        } else {
+        } else if (s.autoAdvance) {
           next();
+        } else {
+          s.setIsPlaying(false);
         }
         break;
       case "error": {

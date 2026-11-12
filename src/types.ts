@@ -24,6 +24,10 @@ export interface Section {
   name: string;
   icon: string; // lucide icon key
   parentId: string | null;
+  /** When present, the section is an ordered setlist: membership is this
+   *  list of track ids (in display order), independent of Track.sectionId.
+   *  Dropping tracks here copies them in without unassigning their home. */
+  trackIds?: string[];
 }
 
 export interface Playlist {
@@ -47,14 +51,13 @@ export interface MonitoredFolder {
 
 export const DEFAULT_SECTIONS: Section[] = [
   { id: "new-songs", name: "New Songs", icon: "Sparkles", parentId: null },
-  { id: "videos", name: "Videos", icon: "Clapperboard", parentId: null },
   { id: "recordings", name: "Recordings", icon: "AudioLines", parentId: null },
   { id: "appendix", name: "Appendix", icon: "BookOpen", parentId: null },
   { id: "silent-prayer", name: "Silent Prayer", icon: "Moon", parentId: null },
   { id: "sabbath", name: "Sabbath", icon: "Sunrise", parentId: null },
-  { id: "sabbath-morning", name: "Morning", icon: "Sunrise", parentId: "sabbath" },
-  { id: "sabbath-afternoon", name: "Afternoon", icon: "Sun", parentId: "sabbath" },
-  { id: "sabbath-evening", name: "Evening", icon: "Sunset", parentId: "sabbath" },
+  { id: "sabbath-morning", name: "Morning", icon: "Sunrise", parentId: "sabbath", trackIds: [] },
+  { id: "sabbath-afternoon", name: "Afternoon", icon: "Sun", parentId: "sabbath", trackIds: [] },
+  { id: "sabbath-evening", name: "Evening", icon: "Sunset", parentId: "sabbath", trackIds: [] },
   { id: "family-event", name: "Family Event", icon: "Users", parentId: null },
   { id: "happy-heart", name: "Happy Heart", icon: "Heart", parentId: null },
   { id: "outloud-prayer", name: "Out-loud Prayer", icon: "Mic", parentId: null },
