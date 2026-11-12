@@ -94,6 +94,7 @@ function CoverThumb({ track }: { track: Track }) {
   const [url, setUrl] = useState<string | null | undefined>(() =>
     peekCover(track.id),
   );
+  const isVid = isVideoPath(track.path);
   useEffect(() => {
     let cancelled = false;
     getCover(track).then((u) => {
@@ -103,18 +104,28 @@ function CoverThumb({ track }: { track: Track }) {
       cancelled = true;
     };
   }, [track.id]);
+  // Video thumbs grow on hover (in-flow, so the play button keeps its
+  // space) instead of spinning like album covers.
+  const vidClass =
+    "h-6 w-6 transition-all duration-200 hover:ml-4 hover:h-[72px] hover:w-[72px]";
   if (url) {
     return (
       <img
         src={url}
         alt=""
-        className="amp-thumb-spin h-6 w-6 shrink-0 rounded object-cover"
+        className={`shrink-0 rounded object-cover ${
+          isVid ? vidClass : "amp-thumb-spin h-6 w-6"
+        }`}
       />
     );
   }
-  const Icon = isVideoPath(track.path) ? Video : Music;
+  const Icon = isVid ? Video : Music;
   return (
-    <span className="amp-thumb-spin flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated">
+    <span
+      className={`flex shrink-0 items-center justify-center rounded bg-surface-elevated ${
+        isVid ? vidClass : "amp-thumb-spin h-6 w-6"
+      }`}
+    >
       <Icon className="h-3.5 w-3.5 text-muted-foreground" />
     </span>
   );
@@ -125,6 +136,7 @@ export function TrackList() {
     tracks,
     sections,
     playlists,
+    videoOrder,
     view,
     search,
     setSearch,
@@ -173,6 +185,8 @@ export function TrackList() {
     view.kind === "section"
       ? sections.find((s) => s.id === view.id && s.trackIds)
       : undefined;
+  // Views with a user-controlled order — drag rows to rearrange.
+  const manualOrder = orderedSection !== undefined || view.kind === "videos";
 
   const visible = useMemo(() => {
     let list = tracks;
@@ -217,7 +231,18 @@ export function TrackList() {
         (t) => !isVideoPath(t.path) && !isRecordingTrack(t, settings.recordingDir),
       );
     } else if (view.kind === "videos") {
-      list = list.filter((t) => isVideoPath(t.path));
+      // Manual order: saved videoOrder first, then new videos (title-sorted).
+      const vids = list.filter((t) => isVideoPath(t.path));
+      const order = new Map(videoOrder.map((id, i) => [id, i] as const));
+      const stragglers = vids
+        .filter((t) => !order.has(t.id))
+        .sort((a, b) => a.title.localeCompare(b.title));
+      stragglers.forEach((t, i) => order.set(t.id, videoOrder.length + i));
+      list = vids.sort(
+        (a, b) =>
+          (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+      );
     } else if (view.kind === "playlist") {
       const pl = playlists.find((p) => p.id === view.id);
       const order = new Map((pl?.trackIds ?? []).map((id, i) => [id, i]));
@@ -234,7 +259,7 @@ export function TrackList() {
           t.album.toLowerCase().includes(q),
       );
     }
-    if (view.kind !== "recent-added" && !orderedSection) {
+    if (view.kind !== "recent-added" && !manualOrder) {
       const dir = sortDir === "asc" ? 1 : -1;
       list = [...list].sort((a, b) => {
         const numSort = sortBy === "trackNumber";
@@ -253,7 +278,7 @@ export function TrackList() {
       });
     }
     return list;
-  }, [tracks, view, search, sortBy, sortDir, sections, playlists, orderedSection]);
+  }, [tracks, view, search, sortBy, sortDir, sections, playlists, orderedSection, manualOrder, videoOrder]);
 
   const startPlayback = (track: Track) => {
     // Ordered setlists (Morning/Afternoon/Evening) don't auto-advance —
@@ -520,7 +545,7 @@ export function TrackList() {
               className="h-8 w-56 rounded-lg border border-border bg-surface-elevated pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-accent focus:outline-none"
             />
           </div>
-          {!orderedSection && (
+          {!manualOrder && (
             <button
               onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}
               aria-label={`Sort direction: ${sortDir}`}
@@ -552,7 +577,7 @@ export function TrackList() {
       <div className="relative min-h-0 flex-1">
         <div
           ref={listRef}
-          data-reorder-before={orderedSection ? "" : undefined}
+          data-reorder-before={manualOrder ? "" : undefined}
           className={`amp-noscroll h-full overflow-y-auto transition ${
             dropTarget?.kind === "view" ||
             (dropTarget?.kind === "reorder" && dropTarget.beforeId === null)
@@ -623,7 +648,7 @@ export function TrackList() {
               {visible.map((t, i) => (
                 <tr
                   key={t.id}
-                  data-reorder-before={orderedSection ? t.id : undefined}
+                  data-reorder-before={manualOrder ? t.id : undefined}
                   onDoubleClick={() => startPlayback(t)}
                   onClick={(e) => onRowClick(e, t, i)}
                   onPointerDown={(e) => beginDrag(e, t)}
@@ -645,7 +670,7 @@ export function TrackList() {
                     <span
                       aria-label={`Drag ${t.title}`}
                       title={
-                        orderedSection
+                        manualOrder
                           ? "Drag to reorder — or drop on a section/playlist in the sidebar"
                           : "Drag to a section or playlist — ⌘/⇧-click rows to select several"
                       }

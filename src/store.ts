@@ -7,7 +7,7 @@ import type {
   MonitoredFolder,
   Section,
 } from "./types";
-import { DEFAULT_SECTIONS } from "./types";
+import { DEFAULT_SECTIONS, isVideoPath } from "./types";
 
 export type RepeatMode = "off" | "all" | "one";
 export type ViewMode =
@@ -31,6 +31,9 @@ interface AppState {
   tracks: Track[];
   sections: Section[];
   playlists: Playlist[];
+  /** Manual order for the All Videos view (video track ids). Videos not in
+   *  the list render after it, title-sorted. */
+  videoOrder: string[];
   monitoredFolders: MonitoredFolder[];
   history: HistoryEntry[];
   scanning: boolean;
@@ -128,6 +131,7 @@ interface AppState {
     dragIds: string[],
     beforeId: string | null,
   ) => void;
+  reorderVideoTracks: (dragIds: string[], beforeId: string | null) => void;
   removeTracksFromOrderedSection: (
     sectionId: string,
     trackIds: string[],
@@ -193,6 +197,7 @@ export const useAppStore = create<AppState>()(
       tracks: [],
       sections: DEFAULT_SECTIONS,
       playlists: [],
+      videoOrder: [],
       monitoredFolders: [],
       history: [],
       scanning: false,
@@ -379,6 +384,35 @@ export const useAppStore = create<AppState>()(
           }),
         });
       },
+      reorderVideoTracks: (dragIds, beforeId) => {
+        // Dropping onto a dragged row changes nothing.
+        if (beforeId && dragIds.includes(beforeId)) return;
+        const s = get();
+        const videos = s.tracks.filter((t) => isVideoPath(t.path));
+        // Merge the saved order with videos not in it yet (title-sorted).
+        const known = s.videoOrder.filter((id) =>
+          videos.some((v) => v.id === id),
+        );
+        const fresh = videos
+          .filter((v) => !known.includes(v.id))
+          .sort((a, b) => a.title.localeCompare(b.title))
+          .map((v) => v.id);
+        const list = [...known, ...fresh];
+        const moved = list.filter((id) => dragIds.includes(id));
+        for (const id of dragIds) {
+          if (!moved.includes(id) && !list.includes(id)) moved.push(id);
+        }
+        const rest = list.filter((id) => !dragIds.includes(id));
+        const at = beforeId ? rest.indexOf(beforeId) : -1;
+        const idx = at === -1 ? rest.length : at;
+        set({
+          videoOrder: [
+            ...rest.slice(0, idx),
+            ...moved,
+            ...rest.slice(idx),
+          ],
+        });
+      },
       removeTracksFromOrderedSection: (sectionId, trackIds) =>
         set({
           sections: get().sections.map((s) =>
@@ -434,6 +468,7 @@ export const useAppStore = create<AppState>()(
               : sec,
           ),
           queue: s.queue.filter((id) => !trackIds.includes(id)),
+          videoOrder: s.videoOrder.filter((id) => !trackIds.includes(id)),
           selectedTrackIds: [],
           ...(removedCurrent
             ? { currentTrackId: null, position: 0, isPlaying: false }
@@ -475,6 +510,7 @@ export const useAppStore = create<AppState>()(
       partialize: (s) => ({
         sections: s.sections,
         playlists: s.playlists,
+        videoOrder: s.videoOrder,
         monitoredFolders: s.monitoredFolders,
         history: s.history,
         tracks: s.tracks,

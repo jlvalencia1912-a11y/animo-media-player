@@ -93,6 +93,8 @@ export function startTrackDrag(ids: string[], startX: number, startY: number) {
       const v = s.view;
       if (v.kind === "section") {
         s.reorderSectionTracks(v.id, ids, target.beforeId);
+      } else if (v.kind === "videos") {
+        s.reorderVideoTracks(ids, target.beforeId);
       }
       return;
     }
