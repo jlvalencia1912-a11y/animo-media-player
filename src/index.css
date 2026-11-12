@@ -94,5 +94,19 @@ html.light {
   --color-surface-hover: #dfddf0;
   --color-border: #d5d2e8;
   --color-foreground: #1c1b2b;
-  --color-muted-foreground: #6d6a85;
+  --color-muted-foreground: #54506e;
+}
+
+/* The player bar's glass tint is dark by default — flip it in light mode
+   so dark text stays readable. */
+html.light .glass {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+/* Custom track-list scrollbar — native one is hidden on that container */
+.amp-noscroll {
+  scrollbar-width: none;
+}
+.amp-noscroll::-webkit-scrollbar {
+  display: none;
 }

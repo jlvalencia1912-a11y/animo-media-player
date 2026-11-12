@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff } from "lucide-react";
+import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff, Play, Pause } from "lucide-react";
 import { useAppStore } from "../store";
 import { RECORDING_EVENTS, RECORDING_TIMES } from "../types";
 import { startRecording, stopRecording } from "../lib/recorder";
-import { playTrack, pause } from "../lib/player";
+import { playTrack, play, pause } from "../lib/player";
 import { startTrackDrag } from "../lib/dnd";
 import { getCover, peekCover } from "../lib/cover";
 import { isRecordingTrack, isVideoPath, type Track } from "../types";
@@ -133,6 +133,7 @@ export function TrackList() {
     sortDir,
     setSortDir,
     currentTrackId,
+    isPlaying,
     setQueue,
     setShowSettings,
     selectedTrackIds,
@@ -259,6 +260,76 @@ export function TrackList() {
     // each song waits for a manual play.
     setQueue(visible.map((t) => t.id), !orderedSection);
     playTrack(track);
+  };
+
+  // Per-row play/pause button — current track toggles, others take over.
+  const rowPlay = (t: Track) => {
+    if (t.id === currentTrackId) {
+      if (isPlaying) {
+        pause();
+      } else {
+        play();
+      }
+    } else {
+      startPlayback(t);
+    }
+  };
+
+  // Custom scrollbar — the native one is hidden (amp-noscroll) so a wide,
+  // grabbable bar can sit on the right edge of the list. Thumb position is
+  // updated imperatively so scroll events don't re-render the table.
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollThumbRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = listRef.current;
+    const th = scrollThumbRef.current;
+    if (!el || !th) return;
+    const update = () => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      if (scrollHeight <= clientHeight) {
+        th.style.display = "none";
+        return;
+      }
+      th.style.display = "block";
+      const h = Math.max(28, clientHeight * (clientHeight / scrollHeight));
+      const maxThumbTop = clientHeight - h;
+      const pct = scrollTop / (scrollHeight - clientHeight);
+      th.style.height = `${h}px`;
+      th.style.transform = `translateY(${maxThumbTop * pct}px)`;
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    // Content-height changes (new rows, filtering) don't resize the
+    // container itself — watch the first child too.
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [visible.length]);
+
+  const onScrollBarPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = listRef.current;
+    if (!el) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const apply = (clientY: number) => {
+      const pct = Math.min(
+        1,
+        Math.max(0, (clientY - rect.top) / rect.height),
+      );
+      el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
+    };
+    apply(e.clientY);
+    const move = (ev: PointerEvent) => apply(ev.clientY);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
 
   const removeSelected = () => {
@@ -476,16 +547,19 @@ export function TrackList() {
 
       {/* List — also a drop zone for OS files (target = current view).
           In ordered sections rows are reorder targets; empty space at the
-          end of the container means "append at end". */}
-      <div
-        data-reorder-before={orderedSection ? "" : undefined}
-        className={`min-h-0 flex-1 overflow-y-auto transition ${
-          dropTarget?.kind === "view" ||
-          (dropTarget?.kind === "reorder" && dropTarget.beforeId === null)
-            ? "ring-2 ring-inset ring-accent"
-            : ""
-        }`}
-      >
+          end of the container means "append at end". The right-edge bar is
+          a custom scrollbar for fast scrubbing through long lists. */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={listRef}
+          data-reorder-before={orderedSection ? "" : undefined}
+          className={`amp-noscroll h-full overflow-y-auto transition ${
+            dropTarget?.kind === "view" ||
+            (dropTarget?.kind === "reorder" && dropTarget.beforeId === null)
+              ? "ring-2 ring-inset ring-accent"
+              : ""
+          }`}
+        >
         {visible.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-surface-elevated">
@@ -590,15 +664,38 @@ export function TrackList() {
                     />
                   </td>
                   <td className="px-3 py-2.5 text-right text-xs tabular-nums text-muted-foreground">
-                    {orderedSection
-                      ? i + 1
-                      : (leadingFileNumber(t.path) ?? t.trackNumber ?? i + 1)}
+                    {leadingFileNumber(t.path) ?? t.trackNumber ?? i + 1}
                   </td>
                   <td
                     className="max-w-0 truncate px-3 py-2.5 font-medium"
                     title="Drag to a section or playlist"
                   >
                     <span className="inline-flex max-w-full cursor-grab touch-none items-center gap-2 active:cursor-grabbing">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          rowPlay(t);
+                        }}
+                        aria-label={
+                          t.id === currentTrackId && isPlaying
+                            ? `Pause ${t.title}`
+                            : `Play ${t.title}`
+                        }
+                        title={
+                          t.id === currentTrackId && isPlaying ? "Pause" : "Play"
+                        }
+                        className={`flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition ${
+                          t.id === currentTrackId
+                            ? "bg-accent text-accent-foreground"
+                            : "bg-accent/15 text-accent hover:bg-accent hover:text-accent-foreground"
+                        }`}
+                      >
+                        {t.id === currentTrackId && isPlaying ? (
+                          <Pause className="h-4 w-4 fill-current" />
+                        ) : (
+                          <Play className="ml-0.5 h-4 w-4 fill-current" />
+                        )}
+                      </button>
                       {settings.showCovers ? (
                         <CoverThumb track={t} />
                       ) : (
@@ -629,6 +726,18 @@ export function TrackList() {
             </tbody>
           </table>
         )}
+        </div>
+        <div
+          onPointerDown={onScrollBarPointerDown}
+          aria-hidden="true"
+          className="group absolute right-0 top-0 z-20 h-full w-4 cursor-pointer touch-none"
+        >
+          <div
+            ref={scrollThumbRef}
+            className="mx-auto w-1.5 rounded-full bg-accent/40 transition-colors group-hover:bg-accent"
+            style={{ display: "none" }}
+          />
+        </div>
       </div>
     </div>
   );

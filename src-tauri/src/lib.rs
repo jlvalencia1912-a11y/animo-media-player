@@ -741,6 +741,48 @@ fn convert_to_mp3(app: tauri::AppHandle, path: String) -> Result<String, String>
     Ok(out2.to_string_lossy().to_string())
 }
 
+/// Grab a thumbnail frame from a video via the bundled ffmpeg — the webview
+/// can't decode every container, so ffmpeg renders a small JPEG for the
+/// track list instead. Tries 1s in first (skips all-black intros), then 0.
+#[tauri::command]
+fn video_thumbnail(app: tauri::AppHandle, path: String) -> Option<CoverArt> {
+    let ffmpeg = resolve_binary(&app, "ffmpeg");
+    for ss in ["1", "0"] {
+        let mut cmd = std::process::Command::new(&ffmpeg);
+        cmd.arg("-ss")
+            .arg(ss)
+            .arg("-i")
+            .arg(&path)
+            .arg("-frames:v")
+            .arg("1")
+            .arg("-vf")
+            .arg("scale=128:-2")
+            .arg("-f")
+            .arg("image2pipe")
+            .arg("-vcodec")
+            .arg("mjpeg")
+            .arg("-")
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        if let Ok(out) = cmd.output() {
+            if out.status.success() && !out.stdout.is_empty() {
+                return Some(CoverArt {
+                    mime: "image/jpeg".into(),
+                    base64: base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &out.stdout,
+                    ),
+                });
+            }
+        }
+    }
+    None
+}
+
 struct CloseToTray(std::sync::Mutex<bool>);
 
 #[tauri::command]
@@ -784,6 +826,7 @@ pub fn run() {
             scan_folders,
             scan_files,
             read_cover,
+            video_thumbnail,
             write_tags,
             file_exists,
             read_media_file,
