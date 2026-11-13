@@ -40,15 +40,6 @@ export function VideoWindow() {
       });
     };
 
-    // Only report genuine media errors — play() can reject (AbortError,
-    // autoplay policy) and error events fire (MEDIA_ERR_ABORTED) while the
-    // video keeps working fine.
-    const reportRealError = () => {
-      if (el.src && el.error && el.error.code !== MediaError.MEDIA_ERR_ABORTED) {
-        report("error");
-      }
-    };
-
     listen<VideoCmd>("amp:video-cmd", (e) => {
       const p = e.payload;
       switch (p.cmd) {
@@ -59,11 +50,13 @@ export function VideoWindow() {
           if (src && el.src !== src) el.src = src;
           if (typeof p.volume === "number") el.volume = p.volume;
           if (typeof p.position === "number") el.currentTime = p.position;
-          if (p.autoplay) el.play().catch(reportRealError);
+          // Rejected plays route through the blob fallback too — only a
+          // failed fallback reports an error (see tryBlobOrReport).
+          if (p.autoplay) el.play().catch(tryBlobOrReport);
           break;
         }
         case "play":
-          el.play().catch(reportRealError);
+          el.play().catch(tryBlobOrReport);
           break;
         case "pause":
           el.pause();

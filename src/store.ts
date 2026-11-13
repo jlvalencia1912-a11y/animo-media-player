@@ -536,6 +536,17 @@ export const useAppStore = create<AppState>()(
         for (const d of DEFAULT_SECTIONS) {
           if (!sections.some((s) => s.id === d.id)) sections.push({ ...d });
         }
+        // Built-in sections display in DEFAULT_SECTIONS order (e.g.
+        // Recordings above New Songs); custom sections keep their order
+        // after them.
+        const defOrder = new Map(
+          DEFAULT_SECTIONS.map((d, i) => [d.id, i] as const),
+        );
+        sections.sort(
+          (a, b) =>
+            (defOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+            (defOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+        );
         // Migrate tracks: ordered sections own membership via trackIds, so
         // stale sectionIds pointing at them fold into the list; ids of
         // removed sections (e.g. "videos") become unsectioned.

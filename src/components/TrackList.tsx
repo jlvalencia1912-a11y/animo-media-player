@@ -105,9 +105,9 @@ function CoverThumb({ track }: { track: Track }) {
     };
   }, [track.id]);
   // Video thumbs grow on hover (in-flow, so the play button keeps its
-  // space) instead of spinning like album covers.
+  // space) with a flip reveal — album covers spin instead.
   const vidClass =
-    "h-6 w-6 transition-all duration-200 hover:ml-4 hover:h-[72px] hover:w-[72px]";
+    "amp-vid-thumb h-6 w-6 transition-all duration-300 ease-out hover:ml-4 hover:h-[72px] hover:w-[72px]";
   if (url) {
     return (
       <img
@@ -393,12 +393,18 @@ export function TrackList() {
   // ⌘/Ctrl-click toggles a row; Shift-click selects the range from the
   // last-clicked row. Dragging a selected row moves the whole selection.
   const onRowClick = (e: React.MouseEvent, t: Track, i: number) => {
+    // Clicks on checkboxes/buttons handle themselves — don't override
+    // the selection they just made.
+    if ((e.target as HTMLElement).closest("input, button, select, a")) return;
     if (e.shiftKey) {
       e.preventDefault();
       const [a, b] = [lastIndexRef.current, i].sort((x, y) => x - y);
       setSelectedTrackIds(visible.slice(a, b + 1).map((x) => x.id));
     } else if (e.metaKey || e.ctrlKey) {
       toggleTrackSelected(t.id);
+    } else {
+      // Plain click selects the row — selected rows drag together.
+      setSelectedTrackIds([t.id]);
     }
     lastIndexRef.current = i;
   };

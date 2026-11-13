@@ -50,8 +50,8 @@ export interface MonitoredFolder {
 }
 
 export const DEFAULT_SECTIONS: Section[] = [
-  { id: "new-songs", name: "New Songs", icon: "Sparkles", parentId: null },
   { id: "recordings", name: "Recordings", icon: "AudioLines", parentId: null },
+  { id: "new-songs", name: "New Songs", icon: "Sparkles", parentId: null },
   { id: "appendix", name: "Appendix", icon: "BookOpen", parentId: null },
   { id: "silent-prayer", name: "Silent Prayer", icon: "Moon", parentId: null },
   { id: "sabbath", name: "Sabbath", icon: "Sunrise", parentId: null },

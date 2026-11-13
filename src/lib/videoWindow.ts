@@ -104,6 +104,14 @@ export function startVideoBridge(): void {
         break;
       case "playing":
         s.setIsPlaying(true);
+        // Self-heal: a video that made it to playback clears any earlier
+        // error report / missing flag (e.g. a codec error the blob
+        // fallback handled).
+        if (s.playbackError) s.setPlaybackError(null);
+        {
+          const t = s.tracks.find((x) => x.id === s.currentTrackId);
+          if (t?.missing) s.updateTrack(t.id, { missing: false });
+        }
         break;
       case "pause":
         s.setIsPlaying(false);
