@@ -77,19 +77,6 @@ body.track-dragging video {
   transform: rotate(360deg);
 }
 
-/* Video thumbnails flip open as they enlarge on hover */
-@keyframes amp-vid-reveal {
-  from {
-    transform: perspective(400px) rotateY(-90deg);
-  }
-  to {
-    transform: perspective(400px) rotateY(0deg);
-  }
-}
-.amp-vid-thumb:hover {
-  animation: amp-vid-reveal 0.35s ease;
-}
-
 /* Sidebar items nod gently while hovered */
 @keyframes amp-nod {
   0%, 100% { transform: translateY(0); }

@@ -90,7 +90,13 @@ function RecordControls() {
   );
 }
 
-function CoverThumb({ track }: { track: Track }) {
+function CoverThumb({
+  track,
+  onExpand,
+}: {
+  track: Track;
+  onExpand?: (url: string, title: string) => void;
+}) {
   const [url, setUrl] = useState<string | null | undefined>(() =>
     peekCover(track.id),
   );
@@ -104,26 +110,36 @@ function CoverThumb({ track }: { track: Track }) {
       cancelled = true;
     };
   }, [track.id]);
-  // Video thumbs grow on hover (in-flow, so the play button keeps its
-  // space) with a flip reveal — album covers spin instead.
-  const vidClass =
-    "amp-vid-thumb h-6 w-6 transition-all duration-300 ease-out hover:ml-4 hover:h-[72px] hover:w-[72px]";
+  // Video thumbs open a lightbox on click; album covers spin on hover.
+  if (isVid && url) {
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onExpand?.(url, track.title);
+        }}
+        aria-label={`Enlarge thumbnail for ${track.title}`}
+        title="Click to enlarge"
+        className="h-6 w-6 shrink-0 cursor-zoom-in overflow-hidden rounded"
+      >
+        <img src={url} alt="" className="h-full w-full object-cover" />
+      </button>
+    );
+  }
   if (url) {
     return (
       <img
         src={url}
         alt=""
-        className={`shrink-0 rounded object-cover ${
-          isVid ? vidClass : "amp-thumb-spin h-6 w-6"
-        }`}
+        className="amp-thumb-spin h-6 w-6 shrink-0 rounded object-cover"
       />
     );
   }
   const Icon = isVid ? Video : Music;
   return (
     <span
-      className={`flex shrink-0 items-center justify-center rounded bg-surface-elevated ${
-        isVid ? vidClass : "amp-thumb-spin h-6 w-6"
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-elevated ${
+        isVid ? "" : "amp-thumb-spin"
       }`}
     >
       <Icon className="h-3.5 w-3.5 text-muted-foreground" />
@@ -164,8 +180,22 @@ export function TrackList() {
     updateSettings,
   } = useAppStore();
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Lightbox for enlarged video thumbnails (click thumb, click away to close)
+  const [expandedThumb, setExpandedThumb] = useState<{
+    url: string;
+    title: string;
+  } | null>(null);
   // Anchor row index for Shift-click range selection
   const lastIndexRef = useRef(0);
+
+  useEffect(() => {
+    if (!expandedThumb) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpandedThumb(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expandedThumb]);
 
   const sectionName = useMemo(() => {
     if (view.kind === "section") {
@@ -728,7 +758,12 @@ export function TrackList() {
                         )}
                       </button>
                       {settings.showCovers ? (
-                        <CoverThumb track={t} />
+                        <CoverThumb
+                          track={t}
+                          onExpand={(url, title) =>
+                            setExpandedThumb({ url, title })
+                          }
+                        />
                       ) : (
                         isVideoPath(t.path) && (
                           <Video className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -770,6 +805,25 @@ export function TrackList() {
           />
         </div>
       </div>
+
+      {/* Enlarged video thumbnail — click away (or Escape) to close */}
+      {expandedThumb && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Thumbnail for ${expandedThumb.title}`}
+          onClick={() => setExpandedThumb(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md"
+        >
+          <img
+            src={expandedThumb.url}
+            alt={expandedThumb.title}
+            title={expandedThumb.title}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[75vh] max-w-[75vw] rounded-xl shadow-2xl"
+          />
+        </div>
+      )}
     </div>
   );
 }

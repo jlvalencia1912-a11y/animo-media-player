@@ -756,7 +756,7 @@ fn video_thumbnail(app: tauri::AppHandle, path: String) -> Option<CoverArt> {
             .arg("-frames:v")
             .arg("1")
             .arg("-vf")
-            .arg("scale=128:-2")
+            .arg("scale=480:-2")
             .arg("-f")
             .arg("image2pipe")
             .arg("-vcodec")

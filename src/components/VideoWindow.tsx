@@ -3,6 +3,7 @@
 // reports playback state back over Tauri events (see lib/videoWindow.ts).
 import { useEffect, useRef } from "react";
 import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { mediaUrl, playViaBlob } from "../lib/player";
 
 interface VideoCmd {
@@ -95,6 +96,19 @@ export function VideoWindow() {
     el.addEventListener("error", tryBlobOrReport);
     el.addEventListener("playing", () => report("playing"));
     el.addEventListener("pause", () => report("pause"));
+
+    // Picture-in-Picture: while the OS PiP owns the video this window is
+    // just a black screen — hide it, and bring it back when PiP exits.
+    const appWin = getCurrentWebviewWindow();
+    el.addEventListener("enterpictureinpicture", () => {
+      void appWin.hide().catch(() => {});
+    });
+    el.addEventListener("leavepictureinpicture", () => {
+      void appWin
+        .show()
+        .then(() => appWin.setFocus().catch(() => {}))
+        .catch(() => {});
+    });
 
     return () => {
       unlisten?.();
