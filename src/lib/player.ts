@@ -1,8 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { openVideoWindow } from "./videoWindow";
 
-/** Stream media via the app's embedded HTTP server — works on local,
- *  mapped-drive, and UNC network paths on every platform. */
+/** Stream media through Tauri's asset protocol — native file serving with
+ *  proper MIME types and range support, no localhost server needed.
+ *  (The embedded HTTP server stays as dormant fallback infra.) */
 let mediaPort = 48760;
 export async function initMediaPort() {
   try {
@@ -10,8 +11,24 @@ export async function initMediaPort() {
     if (p) mediaPort = p;
   } catch {}
 }
-export const mediaUrl = (p: string) =>
-  `http://127.0.0.1:${mediaPort}/${encodeURIComponent(p)}`;
+export const mediaUrl = (p: string) => convertFileSrc(p);
+
+/** Container hint for Blob playback — WKWebView refuses typeless blobs
+ *  ("The operation is not supported"). */
+const MIME: Record<string, string> = {
+  mp3: "audio/mpeg",
+  flac: "audio/flac",
+  wav: "audio/wav",
+  aac: "audio/aac",
+  m4a: "audio/mp4",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  mkv: "video/x-matroska",
+};
+export const mimeFor = (p: string) =>
+  MIME[p.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
 import { emitTo } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import { isVideoPath, type Track } from "../types";
@@ -22,6 +39,7 @@ let audio: HTMLAudioElement | null = null;
 let ctx: AudioContext | null = null;
 let preamp: GainNode | null = null;
 let masterGain: GainNode | null = null;
+let fadeGain: GainNode | null = null;
 let filters: BiquadFilterNode[] = [];
 let micSource: MediaStreamAudioSourceNode | null = null;
 let micGain: GainNode | null = null;
@@ -54,7 +72,9 @@ function getAudio(): HTMLAudioElement {
       node = bq;
       return bq;
     });
-    node.connect(masterGain);
+    fadeGain = ctx.createGain();
+    node.connect(fadeGain);
+    fadeGain.connect(masterGain);
     masterGain.connect(ctx.destination);
     applyEqFromStore();
     applyVolumeFromStore();
@@ -192,6 +212,9 @@ function bindAudioEvents() {
 
 // Tracks we've already retried via each fallback path (per session)
 const convertRetries = new Set<string>();
+/** trackId → path of the MP3 we transcoded for it — replay that file
+ *  instead of re-hitting the undecodable original. */
+const convertedPaths = new Map<string, string>();
 // Tracks that only play via the IPC Blob transport — skip the media-server
 // URL entirely on future plays.
 const blobPreferred = new Set<string>();
@@ -201,10 +224,10 @@ const blobPreferred = new Set<string>();
 export async function playViaBlob(
   el: HTMLMediaElement,
   path: string,
-): Promise<boolean> {
+): Promise<true | string> {
   try {
     const buf = await invoke<ArrayBuffer>("read_media_file", { path });
-    el.src = URL.createObjectURL(new Blob([buf]));
+    el.src = URL.createObjectURL(new Blob([buf], { type: mimeFor(path) }));
     el.load();
     await el.play().catch(() => {});
     blobPreferred.add(path);
@@ -212,8 +235,8 @@ export async function playViaBlob(
     s.setIsPlaying(true);
     updateMediaSessionPlayback("playing");
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
   }
 }
 
@@ -228,22 +251,43 @@ async function handleMediaError(e: Event) {
   const t = s.tracks.find((x) => x.id === s.currentTrackId);
   if (!t) return;
 
+  // Known-undecodable track — go straight to its converted MP3 rather
+  // than re-running the whole fallback chain.
+  const converted = convertedPaths.get(t.id);
+  if (converted) {
+    if ((await playViaBlob(el, converted)) === true) {
+      s.setPlaybackError(null);
+      return;
+    }
+    el.src = mediaUrl(converted);
+    el.load();
+    el.play().catch(() => {});
+    return;
+  }
+
   // Stage 1 — server unreachable (firewall/AV): stream via IPC Blob.
   // Skip when the element is already playing a blob: source (it genuinely
   // failed, not a transport problem).
-  if (!el.src.startsWith("blob:") && (await playViaBlob(el, t.path))) {
-    s.setPlaybackError(null);
-    return;
+  let blobErr = "";
+  if (!el.src.startsWith("blob:")) {
+    const r = await playViaBlob(el, t.path);
+    if (r === true) {
+      s.setPlaybackError(null);
+      return;
+    }
+    blobErr = r;
   }
 
   // Stage 2 — undecodable audio (e.g. ALAC-in-m4a on WebView2): transcode
   // to MP3 once with the bundled ffmpeg and play that.
+  let convErr = "";
   if (!convertRetries.has(t.id) && !isVideoPath(t.path)) {
     convertRetries.add(t.id);
     s.setPlaybackError(`"${t.title}" uses an unsupported codec — converting to MP3…`);
     try {
       const mp3 = await invoke<string>("convert_to_mp3", { path: t.path });
-      if (await playViaBlob(el, mp3)) {
+      convertedPaths.set(t.id, mp3);
+      if ((await playViaBlob(el, mp3)) === true) {
         s.setPlaybackError(null);
         return;
       }
@@ -251,14 +295,15 @@ async function handleMediaError(e: Event) {
       el.load();
       el.play().catch(() => {});
       return;
-    } catch {
-      // fall through to generic error
+    } catch (e) {
+      convErr = e instanceof Error ? e.message : String(e);
     }
   }
 
+  const detail = [blobErr, convErr].filter(Boolean).join(" · ");
   s.setPlaybackError(
-    `Could not play "${t.title}". The file may be missing, moved, or in an unsupported format. ` +
-      `Check that ${t.path} exists and is a readable MP3/FLAC/WAV/AAC/M4A/MP4/MOV file.`,
+    `Could not play "${t.title}". The file may be missing, moved, or in an unsupported format.` +
+      (detail ? ` (${detail})` : ""),
   );
   s.updateTrack(t.id, { missing: true });
   s.setIsPlaying(false);
@@ -426,10 +471,13 @@ export async function playTrack(track: Track) {
     bindAudioEvents();
   }
 
+  // A track whose original file can't be decoded replays its converted
+  // MP3 instead — re-trying the original just re-fails.
+  const srcPath = convertedPaths.get(track.id) ?? track.path;
   // Tracks that only play over IPC Blob skip the media-server URL.
-  const useBlob = blobPreferred.has(track.path);
+  const useBlob = blobPreferred.has(srcPath);
   if (!useBlob) {
-    el.src = mediaUrl(track.path);
+    el.src = mediaUrl(srcPath);
     el.currentTime = 0;
   }
   s().setCurrentTrack(track.id);
@@ -450,7 +498,8 @@ export async function playTrack(track: Track) {
   if (ctx?.state === "suspended") await ctx.resume().catch(() => {});
   try {
     if (useBlob) {
-      if (!(await playViaBlob(el, track.path))) throw new Error("blob failed");
+      const r = await playViaBlob(el, srcPath);
+      if (r !== true) throw new Error(r);
     } else {
       await el.play();
     }
@@ -486,6 +535,32 @@ function rampVolume(el: HTMLMediaElement, target: number, done?: () => void) {
   }, 50);
 }
 
+let fadeRamp: ReturnType<typeof setInterval> | null = null;
+
+/** Ramp the dedicated fade GainNode — el.volume is ignored by some webviews
+ *  (WKWebView) once the element feeds a MediaElementAudioSource, so fades
+ *  must happen inside the WebAudio graph to be audible everywhere. */
+function rampGain(target: number, done?: () => void) {
+  if (!fadeGain) {
+    done?.();
+    return;
+  }
+  if (fadeRamp) clearInterval(fadeRamp);
+  const g = fadeGain.gain;
+  const steps = 30;
+  const start = g.value;
+  let i = 0;
+  fadeRamp = setInterval(() => {
+    i++;
+    g.value = Math.min(1, Math.max(0, start + (target - start) * (i / steps)));
+    if (i >= steps) {
+      clearInterval(fadeRamp!);
+      fadeRamp = null;
+      done?.();
+    }
+  }, 50);
+}
+
 /** Fade toggle — smoothly fades the current song out then pauses; press
  *  again to fade back in. */
 export function fadeToggle() {
@@ -493,16 +568,20 @@ export function fadeToggle() {
   const el = getAudio();
   if (!el || !el.src) return;
   if (s.isPlaying) {
-    rampVolume(el, 0, () => {
+    rampGain(0, () => {
       el.pause();
-      el.volume = s.volume; // restore level for the next play
+      // Let the pipeline drain before restoring the gain — resetting it
+      // immediately lets the buffered tail blip out at full volume.
+      window.setTimeout(() => {
+        if (fadeGain) fadeGain.gain.value = 1;
+      }, 250);
     });
     s.setIsPlaying(false);
     updateMediaSessionPlayback("paused");
   } else {
-    el.volume = 0;
+    if (fadeGain) fadeGain.gain.value = 0;
     el.play().catch(() => {});
-    rampVolume(el, s.volume);
+    rampGain(1);
     s.setIsPlaying(true);
     updateMediaSessionPlayback("playing");
   }

@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
-use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 use walkdir::WalkDir;
@@ -120,7 +119,7 @@ fn read_metadata(path: &Path, file_size: u64, mtime_ms: u64) -> ScannedFile {
     out
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn scan_folders(app: tauri::AppHandle, folders: Vec<String>) -> ScanResult {
     let mut seen: HashSet<String> = HashSet::new();
     let mut paths: Vec<(std::path::PathBuf, u64, u64)> = Vec::new();
@@ -182,7 +181,7 @@ fn scan_folders(app: tauri::AppHandle, folders: Vec<String>) -> ScanResult {
     ScanResult { files, errors }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn scan_files(paths: Vec<String>) -> ScanResult {
     let mut files = Vec::new();
     let mut errors = Vec::new();
@@ -215,7 +214,7 @@ struct CoverArt {
     base64: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_cover(path: String) -> Option<CoverArt> {
     let tagged = Probe::open(Path::new(&path)).ok()?.read().ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
@@ -292,7 +291,7 @@ fn apply_edits(path: &str, edits: &TagEdits) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn write_tags(paths: Vec<String>, edits: TagEdits) -> Vec<TagWriteResult> {
     paths
         .into_iter()
@@ -311,7 +310,7 @@ fn write_tags(paths: Vec<String>, edits: TagEdits) -> Vec<TagWriteResult> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn file_exists(path: String) -> bool {
     Path::new(&path).is_file()
 }
@@ -320,7 +319,7 @@ fn file_exists(path: String) -> bool {
 /// IPC channel — the frontend plays it via a Blob URL. This is the fallback
 /// when the embedded HTTP server can't be reached (e.g. a firewall blocks
 /// the loopback listener).
-#[tauri::command]
+#[tauri::command(async)]
 fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
     std::fs::read(&path)
         .map(tauri::ipc::Response::new)
@@ -332,7 +331,7 @@ fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
 /// Save a mic recording (raw bytes from the webview's MediaRecorder) into
 /// the chosen folder — or ~/Desktop/Animo Recordings/ when none is set.
 /// Returns the absolute path so the frontend can scan it into the library.
-#[tauri::command]
+#[tauri::command(async)]
 fn save_recording(
     app: tauri::AppHandle,
     data: Vec<u8>,
@@ -394,7 +393,7 @@ fn read_fragments<R: Read>(reader: R, mut on_line: impl FnMut(&str)) {
 /// ~/Desktop/Animo Downloads/. `format` is a yt-dlp format selector chosen
 /// by the UI (single muxed files only — no ffmpeg merge needed). Streams
 /// progress to the frontend over `amp:dl-progress`. Returns the file path.
-#[tauri::command]
+#[tauri::command(async)]
 fn download_youtube(
     app: tauri::AppHandle,
     url: String,
@@ -700,7 +699,7 @@ fn resolve_binary(app: &tauri::AppHandle, name: &str) -> PathBuf {
 /// Transcode a media file to MP3 via the bundled ffmpeg — used as a
 /// fallback when the webview can't decode a file (e.g. ALAC-in-m4a on
 /// Windows). Output goes to app-data/converted/<name>.mp3.
-#[tauri::command]
+#[tauri::command(async)]
 fn convert_to_mp3(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let ffmpeg = resolve_binary(&app, "ffmpeg");
     let out_dir = app
@@ -731,12 +730,20 @@ fn convert_to_mp3(app: tauri::AppHandle, path: String) -> Result<String, String>
         cmd.creation_flags(0x08000000);
     }
     let out2 = out.clone();
-    let status = cmd
-        .stderr(std::process::Stdio::null())
-        .status()
+    let output = cmd
+        .output()
         .map_err(|e| format!("Could not run ffmpeg: {e}"))?;
-    if !status.success() || !out2.is_file() {
-        return Err("ffmpeg could not convert this file".into());
+    if !output.status.success() || !out2.is_file() {
+        // Surface the last meaningful stderr line — most often it's a
+        // permission error or a corrupt/unsupported input container.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .last()
+            .map(|l| l.trim().to_string())
+            .unwrap_or_else(|| "unknown error".into());
+        return Err(format!("ffmpeg could not convert this file: {detail}"));
     }
     Ok(out2.to_string_lossy().to_string())
 }
@@ -744,7 +751,7 @@ fn convert_to_mp3(app: tauri::AppHandle, path: String) -> Result<String, String>
 /// Grab a thumbnail frame from a video via the bundled ffmpeg — the webview
 /// can't decode every container, so ffmpeg renders a small JPEG for the
 /// track list instead. Tries 1s in first (skips all-black intros), then 0.
-#[tauri::command]
+#[tauri::command(async)]
 fn video_thumbnail(app: tauri::AppHandle, path: String) -> Option<CoverArt> {
     let ffmpeg = resolve_binary(&app, "ffmpeg");
     for ss in ["1", "0"] {
@@ -792,6 +799,126 @@ fn set_close_to_tray(state: tauri::State<CloseToTray>, enabled: bool) {
     }
 }
 
+/// Diagnostic log — the video pop-up + PiP watcher write here so we can
+/// see which (if any) PiP signals actually fire in this WKWebView.
+#[tauri::command]
+fn dbg_log(msg: String) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/animo-pip.log")
+    {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
+
+/// macOS-only: WKWebView's native PiP (the AVKit controls button) fires no
+/// JS-detectable event at all — no enterpictureinpicture, no
+/// webkitpresentationmodechanged, and the state properties never
+/// populate. But macOS does create a real PiP panel window, visible in
+/// the window server list. Watch for a floating window owned by this
+/// process (layer != 0 — our normal windows are layer 0, menus are
+/// >100) and translate its lifetime into `amp:pip-native` events so the
+/// pop-up can hide itself while the PiP panel owns the video.
+#[cfg(target_os = "macos")]
+fn start_pip_watcher(app: tauri::AppHandle) {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+    use core_graphics::window::{
+        kCGNullWindowID, kCGWindowListOptionOnScreenOnly, CGWindowListCopyWindowInfo,
+    };
+
+    type Dict = CFDictionary<*const std::ffi::c_void, *const std::ffi::c_void>;
+
+    fn val(d: &Dict, key: &str) -> Option<CFType> {
+        let k = CFString::new(key);
+        d.find(k.as_concrete_TypeRef() as *const std::ffi::c_void)
+            .map(|p| unsafe { CFType::wrap_under_get_rule(*p) })
+    }
+    fn get_str(d: &Dict, key: &str) -> Option<String> {
+        val(d, key)
+            .and_then(|t| t.downcast::<CFString>())
+            .map(|s| s.to_string())
+    }
+    fn get_i64(d: &Dict, key: &str) -> Option<i64> {
+        val(d, key)
+            .and_then(|t| t.downcast::<CFNumber>())
+            .and_then(|n| n.to_i64())
+    }
+    fn dict_val(d: &Dict, key: &str) -> Option<Dict> {
+        val(d, key).and_then(|t| t.downcast::<Dict>())
+    }
+
+    std::thread::spawn(move || {
+        let our_pid = std::process::id() as i64;
+        let mut hits = 0u8;
+        let mut active = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let mut pip = false;
+            unsafe {
+                let list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+                if !list.is_null() {
+                    let arr: CFArray<CFType> = CFArray::wrap_under_create_rule(list);
+                    for i in 0..arr.len() {
+                        let Some(ty) = arr.get(i) else { continue };
+                        let Some(d) = ty.downcast::<Dict>() else {
+                            continue;
+                        };
+                        let pid = get_i64(&d, "kCGWindowOwnerPID").unwrap_or(-1);
+                        let layer = get_i64(&d, "kCGWindowLayer").unwrap_or(0);
+                        let owner = get_str(&d, "kCGWindowOwnerName").unwrap_or_default();
+                        let name = get_str(&d, "kCGWindowName").unwrap_or_default();
+                        let (mut w, mut h) = (0i64, 0i64);
+                        if let Some(b) = dict_val(&d, "kCGWindowBounds") {
+                            w = get_i64(&b, "Width").unwrap_or(0);
+                            h = get_i64(&b, "Height").unwrap_or(0);
+                        }
+                        let ours = pid == our_pid;
+                        let pipish = owner.to_lowercase().contains("pip");
+                        // Log anything that might be the PiP panel so the
+                        // heuristic can be calibrated from real data.
+                        if (ours && layer != 0) || pipish {
+                            dbg_log(format!(
+                                "[watcher] win owner={owner} pid={pid} layer={layer} {w}x{h} name={name:?}"
+                            ));
+                        }
+                        if ours && layer != 0 && layer < 100 && w >= 150 && h >= 80 {
+                            pip = true;
+                        }
+                        if pipish && w >= 150 && h >= 80 {
+                            pip = true;
+                        }
+                    }
+                }
+            }
+            // Debounce: the panel must persist across two scans before we
+            // act, so transient popups (tray menus, tooltips) can't
+            // accidentally hide the video window.
+            if pip {
+                hits = hits.saturating_add(1);
+            } else {
+                hits = 0;
+            }
+            if hits >= 2 && !active {
+                active = true;
+                dbg_log("[watcher] PiP panel detected -> amp:pip-native true".into());
+                let _ = app.emit_to("video", "amp:pip-native", true);
+            } else if hits == 0 && active {
+                active = false;
+                dbg_log("[watcher] PiP panel gone -> amp:pip-native false".into());
+                let _ = app.emit_to("video", "amp:pip-native", false);
+            }
+        }
+    });
+}
+#[cfg(not(target_os = "macos"))]
+fn start_pip_watcher(_app: tauri::AppHandle) {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -800,6 +927,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             start_media_server();
+            start_pip_watcher(app.handle().clone());
 
             use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
             let menu = Menu::with_items(app, &[
@@ -820,23 +948,9 @@ pub fn run() {
             app.on_menu_event(|app, ev| {
                 let _ = app.emit("amp:menu", ev.id().0.clone());
             });
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            scan_folders,
-            scan_files,
-            read_cover,
-            video_thumbnail,
-            write_tags,
-            file_exists,
-            read_media_file,
-            convert_to_mp3,
-            media_port,
-            save_recording,
-            download_youtube,
-            set_close_to_tray
-        ])
-        .setup(|app| {
+
+            // NOTE: Builder::setup REPLACES the previous closure — keep
+            // everything in ONE setup or the media server never starts.
             let show = MenuItem::with_id(app, "show", "Show Animo", true, None::<&str>)?;
             let toggle =
                 MenuItem::with_id(app, "toggle", "Play / Pause", true, None::<&str>)?;
@@ -868,6 +982,21 @@ pub fn run() {
                 .build(app)?;
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            scan_folders,
+            scan_files,
+            read_cover,
+            video_thumbnail,
+            write_tags,
+            file_exists,
+            read_media_file,
+            convert_to_mp3,
+            media_port,
+            save_recording,
+            download_youtube,
+            set_close_to_tray,
+            dbg_log
+        ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {

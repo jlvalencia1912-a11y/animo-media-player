@@ -17,7 +17,7 @@ import {
   addFilesAsTracks,
   type ScannedFile,
 } from "./library";
-import { isMediaPath, isVideoPath } from "../types";
+import { isImagePath, isMediaPath, isVideoPath } from "../types";
 
 /** Resolve "view" to the concrete section/playlist currently on screen. */
 export function resolveDropTarget(
@@ -121,6 +121,13 @@ export async function importPathsToTarget(
   target: DropTarget,
 ): Promise<void> {
   const store = useAppStore.getState();
+  // Image files dropped anywhere while the Digital Banners view is open
+  // become banners — no media scanning needed.
+  if (store.view.kind === "banners") {
+    const imgs = paths.filter(isImagePath);
+    if (imgs.length) store.addBanners(imgs);
+    return;
+  }
   // A reorder row only makes sense for track drags — treat OS file drops
   // on the list as drops on the current view.
   const t = target.kind === "reorder" ? ({ kind: "view" } as const) : target;

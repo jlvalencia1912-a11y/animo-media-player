@@ -17,6 +17,10 @@ export interface Track {
   /** null = unsectioned: only visible in library-wide views */
   sectionId: string | null;
   missing?: boolean;
+  /** 0–3 heart rating (videos). */
+  hearts?: number;
+  /** User-renamed title — scans preserve it instead of the tag/name. */
+  customTitle?: boolean;
 }
 
 export interface Section {
@@ -36,6 +40,37 @@ export interface Playlist {
   trackIds: string[];
   createdAt: number;
 }
+
+/** A digital banner — a still image displayed on a second window. */
+export interface Banner {
+  /** Stable id = normalized absolute path */
+  id: string;
+  path: string;
+  name: string;
+  addedAt: number;
+  /** Focal point of the visible region, 0..1 fractions of the image
+   *  (.5/.5 = centered). Combined with object-position. */
+  cropX: number;
+  cropY: number;
+  /** Zoom ≥ 1 — scales the image about its center. */
+  zoom: number;
+  /** CSS filter multipliers; 1 = neutral. */
+  brightness: number;
+  contrast: number;
+}
+
+export type BannerEdits = Pick<
+  Banner,
+  "cropX" | "cropY" | "zoom" | "brightness" | "contrast"
+>;
+
+export const DEFAULT_BANNER_EDITS: BannerEdits = {
+  cropX: 0.5,
+  cropY: 0.5,
+  zoom: 1,
+  brightness: 1,
+  contrast: 1,
+};
 
 export interface HistoryEntry {
   trackId: string;
@@ -65,11 +100,21 @@ export const DEFAULT_SECTIONS: Section[] = [
 
 export const AUDIO_EXTENSIONS = ["mp3", "flac", "wav", "aac", "m4a"];
 export const VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "webm"];
+export const IMAGE_EXTENSIONS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "bmp",
+  "avif",
+];
 
 const ext = (p: string) => p.split(".").pop()?.toLowerCase() ?? "";
 export const isAudioPath = (p: string) => AUDIO_EXTENSIONS.includes(ext(p));
 export const isVideoPath = (p: string) => VIDEO_EXTENSIONS.includes(ext(p));
 export const isMediaPath = (p: string) => isAudioPath(p) || isVideoPath(p);
+export const isImagePath = (p: string) => IMAGE_EXTENSIONS.includes(ext(p));
 
 /** A track counts as a mic recording when it sits in the Recordings section
  *  OR lives under the recordings export folder (chosen or default). */

@@ -4,10 +4,11 @@
 // aren't possible), so while it is open it OWNS video playback: the main
 // window sends it commands (load/play/pause/seek) and the pop-up reports
 // back timeupdate/ended/error/playing/pause over Tauri events — the same
-// pattern as the mini player bridge. When the pop-up closes, playback
-// hands back to the in-window overlay at the last known position.
+// pattern as the mini player bridge. Closing the pop-up ends video
+// playback and returns the main window to its track list.
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { useAppStore } from "../store";
 import { isVideoPath } from "../types";
 import { next, getVideoElement } from "./player";
@@ -37,14 +38,19 @@ function handoffToPopup() {
   getVideoElement()?.pause();
 }
 
-/** Pop-up closed — resume the video in the in-window overlay. */
-function resumeInOverlay() {
+/** Pop-up closed/hidden — stop video playback entirely so the main
+ *  window goes back to the track list. */
+function stopOnPopupClose() {
   const s = useAppStore.getState();
-  const t = s.tracks.find((x) => x.id === s.currentTrackId);
+  s.setIsPlaying(false);
+  s.setCurrentTrack(null);
+  sendCmd({ cmd: "pause" }); // the pop-up's own element keeps its src
   const el = getVideoElement();
-  if (!t || !el || !isVideoPath(t.path)) return;
-  el.currentTime = s.position;
-  if (s.isPlaying) el.play().catch(() => {});
+  if (el) {
+    el.pause();
+    el.removeAttribute("src");
+    el.load();
+  }
 }
 
 export async function openVideoWindow(): Promise<void> {
@@ -52,6 +58,12 @@ export async function openVideoWindow(): Promise<void> {
   const existing = await WebviewWindow.getByLabel(LABEL);
   if (existing) {
     s.setVideoPopupOpen(true);
+    // The window may have been hidden or shrunk to 1px by the PiP path —
+    // restore a normal visible state before handing it a new video.
+    await existing.setIgnoreCursorEvents(false).catch(() => {});
+    await existing.setMinSize(new LogicalSize(480, 320)).catch(() => {});
+    await existing.setSize(new LogicalSize(960, 600)).catch(() => {});
+    await existing.center().catch(() => {});
     await existing.show().catch(() => {});
     await existing.setFocus().catch(() => {});
     handoffToPopup();
@@ -70,9 +82,18 @@ export async function openVideoWindow(): Promise<void> {
   win.once("tauri://created", () => {
     useAppStore.getState().setVideoPopupOpen(true);
   });
+  // Hide instead of destroying — the webview (and its loaded video) stay
+  // alive, so the next video opens instantly instead of waiting for a
+  // full window+webview boot each time.
+  void win.onCloseRequested((e) => {
+    e.preventDefault();
+    useAppStore.getState().setVideoPopupOpen(false);
+    stopOnPopupClose();
+    void win.hide();
+  });
   win.once("tauri://destroyed", () => {
     useAppStore.getState().setVideoPopupOpen(false);
-    resumeInOverlay();
+    stopOnPopupClose();
   });
   win.once("tauri://error", (e) => {
     console.error("Failed to create video window:", e.payload);

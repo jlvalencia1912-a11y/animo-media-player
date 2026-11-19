@@ -16,6 +16,7 @@ import {
   Clapperboard,
   AudioLines,
   Video,
+  Images,
   Volume2,
   FolderOpen,
   Settings,
@@ -135,6 +136,7 @@ export function Sidebar() {
       <NavItem icon={Library} label="All Songs" active={view.kind === "all"} onClick={() => setView({ kind: "all" })} />
       <NavItem icon={Video} label="All Videos" active={view.kind === "videos"} onClick={() => setView({ kind: "videos" })} />
       <NavItem icon={Clock} label="Recently Added" active={view.kind === "recent-added"} onClick={() => setView({ kind: "recent-added" })} />
+      <NavItem icon={Images} label="Digital Banners" active={view.kind === "banners"} onClick={() => setView({ kind: "banners" })} />
 
       <div className="mb-1 mt-4 flex items-center justify-between px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         <span>Sections</span>

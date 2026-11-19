@@ -1,13 +1,15 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type {
+  Banner,
+  BannerEdits,
   Track,
   Playlist,
   HistoryEntry,
   MonitoredFolder,
   Section,
 } from "./types";
-import { DEFAULT_SECTIONS, isVideoPath } from "./types";
+import { DEFAULT_BANNER_EDITS, DEFAULT_SECTIONS, isVideoPath } from "./types";
 
 export type RepeatMode = "off" | "all" | "one";
 export type ViewMode =
@@ -15,6 +17,7 @@ export type ViewMode =
   | { kind: "playlist"; id: string }
   | { kind: "recent-added" }
   | { kind: "videos" }
+  | { kind: "banners" }
   | { kind: "all" };
 
 /** Where a drag is hovering. "view" resolves to whatever the track list shows;
@@ -35,6 +38,8 @@ interface AppState {
    *  the list render after it, title-sorted. */
   videoOrder: string[];
   monitoredFolders: MonitoredFolder[];
+  /** Digital banners — still images shown on a second window. */
+  banners: Banner[];
   history: HistoryEntry[];
   scanning: boolean;
   scanProgress: { scanned: number; total: number; current: string } | null;
@@ -62,6 +67,12 @@ interface AppState {
 
   // Video pop-up window owns playback when open (transient)
   videoPopupOpen: boolean;
+  /** All Videos heart filter: 0 = all, 1–3 = only that rating. */
+  videoHeartFilter: number;
+  // Banner display pop-up (transient)
+  bannerPopupOpen: boolean;
+  currentBannerId: string | null;
+  selectedBannerIds: string[];
 
   // Mic recording in progress (transient)
   recording: { startedAt: number; mime: string } | null;
@@ -139,9 +150,18 @@ interface AppState {
   unassignTracksFromSection: (trackIds: string[]) => void;
   removeTracksFromPlaylist: (playlistId: string, trackIds: string[]) => void;
   removeTracks: (trackIds: string[]) => void;
+  addBanners: (paths: string[]) => void;
+  updateBanner: (id: string, updates: Partial<Banner>) => void;
+  applyBannerEdits: (ids: string[], edits: BannerEdits) => void;
+  removeBanners: (ids: string[]) => void;
+  toggleBannerSelected: (id: string) => void;
+  setSelectedBannerIds: (ids: string[]) => void;
+  setBannerPopupOpen: (b: boolean) => void;
+  setCurrentBanner: (id: string | null) => void;
   setDropTarget: (t: DropTarget | null) => void;
   setTrackDrag: (d: AppState["trackDrag"]) => void;
   setVideoPopupOpen: (b: boolean) => void;
+  setVideoHeartFilter: (n: number) => void;
   setRecording: (r: AppState["recording"]) => void;
   setHistory: (h: HistoryEntry[]) => void;
   addHistoryEntry: (e: HistoryEntry) => void;
@@ -199,6 +219,7 @@ export const useAppStore = create<AppState>()(
       playlists: [],
       videoOrder: [],
       monitoredFolders: [],
+      banners: [],
       history: [],
       scanning: false,
       scanProgress: null,
@@ -218,6 +239,10 @@ export const useAppStore = create<AppState>()(
       dropTarget: null,
       trackDrag: null,
       videoPopupOpen: false,
+      videoHeartFilter: 0,
+      bannerPopupOpen: false,
+      currentBannerId: null,
+      selectedBannerIds: [],
       recording: null,
 
       view: { kind: "all" },
@@ -475,9 +500,59 @@ export const useAppStore = create<AppState>()(
             : {}),
         });
       },
+      addBanners: (paths) => {
+        const existing = new Set(get().banners.map((b) => b.id.toLowerCase()));
+        const fresh = paths
+          .filter((p) => !existing.has(p.toLowerCase()))
+          .map((p) => ({
+            id: p,
+            path: p,
+            name:
+              p
+                .replace(/\\/g, "/")
+                .split("/")
+                .pop()
+                ?.replace(/\.[^.]+$/, "") ?? p,
+            addedAt: Date.now(),
+            ...DEFAULT_BANNER_EDITS,
+          }));
+        if (fresh.length) set({ banners: [...get().banners, ...fresh] });
+      },
+      updateBanner: (id, updates) =>
+        set({
+          banners: get().banners.map((b) =>
+            b.id === id ? { ...b, ...updates } : b,
+          ),
+        }),
+      applyBannerEdits: (ids, edits) =>
+        set({
+          banners: get().banners.map((b) =>
+            ids.includes(b.id) ? { ...b, ...edits } : b,
+          ),
+        }),
+      removeBanners: (ids) => {
+        const s = get();
+        set({
+          banners: s.banners.filter((b) => !ids.includes(b.id)),
+          selectedBannerIds: [],
+          ...(s.currentBannerId && ids.includes(s.currentBannerId)
+            ? { currentBannerId: null }
+            : {}),
+        });
+      },
+      toggleBannerSelected: (id) =>
+        set({
+          selectedBannerIds: get().selectedBannerIds.includes(id)
+            ? get().selectedBannerIds.filter((x) => x !== id)
+            : [...get().selectedBannerIds, id],
+        }),
+      setSelectedBannerIds: (selectedBannerIds) => set({ selectedBannerIds }),
+      setBannerPopupOpen: (bannerPopupOpen) => set({ bannerPopupOpen }),
+      setCurrentBanner: (currentBannerId) => set({ currentBannerId }),
       setDropTarget: (dropTarget) => set({ dropTarget }),
       setTrackDrag: (trackDrag) => set({ trackDrag }),
       setVideoPopupOpen: (videoPopupOpen) => set({ videoPopupOpen }),
+      setVideoHeartFilter: (videoHeartFilter) => set({ videoHeartFilter }),
       setRecording: (recording) => set({ recording }),
       setHistory: (history) => set({ history }),
       addHistoryEntry: (e) => set({ history: [e, ...get().history].slice(0, 500) }),
@@ -512,6 +587,7 @@ export const useAppStore = create<AppState>()(
         playlists: s.playlists,
         videoOrder: s.videoOrder,
         monitoredFolders: s.monitoredFolders,
+        banners: s.banners,
         history: s.history,
         tracks: s.tracks,
         settings: s.settings,

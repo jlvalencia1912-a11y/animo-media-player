@@ -28,7 +28,8 @@ function toTrack(f: ScannedFile, prev: Track | undefined): Track {
     id: f.path,
     path: f.path,
     fileName: f.fileName,
-    title: f.title || prev?.title || f.fileName,
+    // A user-renamed title wins over whatever the file's tags say.
+    title: prev?.customTitle ? prev.title : f.title || prev?.title || f.fileName,
     artist: f.artist,
     album: f.album,
     trackNumber: f.trackNumber,
@@ -42,6 +43,8 @@ function toTrack(f: ScannedFile, prev: Track | undefined): Track {
     // preserve user-assigned section (including "unsectioned"); new files
     // land in New Songs (audio) or unsectioned (video — see All Videos)
     sectionId: prev ? prev.sectionId : isVideoPath(f.path) ? null : "new-songs",
+    hearts: prev?.hearts ?? 0,
+    customTitle: prev?.customTitle ?? false,
     missing: false,
   };
 }

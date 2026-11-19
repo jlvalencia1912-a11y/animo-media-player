@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff, Play, Pause } from "lucide-react";
+import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff, Play, Pause, Heart } from "lucide-react";
 import { useAppStore } from "../store";
 import { RECORDING_EVENTS, RECORDING_TIMES } from "../types";
 import { startRecording, stopRecording } from "../lib/recorder";
@@ -7,6 +7,8 @@ import { playTrack, play, pause } from "../lib/player";
 import { startTrackDrag } from "../lib/dnd";
 import { getCover, peekCover } from "../lib/cover";
 import { isRecordingTrack, isVideoPath, type Track } from "../types";
+import { VideoGrid } from "./VideoGrid";
+import { BannersView } from "./BannersView";
 
 function formatTime(sec: number) {
   if (!Number.isFinite(sec) || sec <= 0) return "—";
@@ -178,6 +180,8 @@ export function TrackList() {
     setView,
     settings,
     updateSettings,
+    videoHeartFilter,
+    setVideoHeartFilter,
   } = useAppStore();
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   // Lightbox for enlarged video thumbnails (click thumb, click away to close)
@@ -273,6 +277,10 @@ export function TrackList() {
           (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
           (order.get(b.id) ?? Number.MAX_SAFE_INTEGER),
       );
+      // Heart filter — exact-level favorites view.
+      if (videoHeartFilter > 0) {
+        list = list.filter((t) => (t.hearts ?? 0) === videoHeartFilter);
+      }
     } else if (view.kind === "playlist") {
       const pl = playlists.find((p) => p.id === view.id);
       const order = new Map((pl?.trackIds ?? []).map((id, i) => [id, i]));
@@ -308,12 +316,18 @@ export function TrackList() {
       });
     }
     return list;
-  }, [tracks, view, search, sortBy, sortDir, sections, playlists, orderedSection, manualOrder, videoOrder]);
+  }, [tracks, view, search, sortBy, sortDir, sections, playlists, orderedSection, manualOrder, videoOrder, videoHeartFilter]);
 
   const startPlayback = (track: Track) => {
-    // Ordered setlists (Morning/Afternoon/Evening) don't auto-advance —
-    // each song waits for a manual play.
-    setQueue(visible.map((t) => t.id), !orderedSection);
+    // Auto-advance only in continuous-listening contexts: the library
+    // views, playlists, and the Family Event / Happy Heart sections.
+    // Worship sections (New Songs, Appendix, Silent Prayer, Sabbath
+    // setlists, Out-loud Prayer) and Recordings stop after one song.
+    const autoAdvance =
+      view.kind !== "section" ||
+      view.id === "family-event" ||
+      view.id === "happy-heart";
+    setQueue(visible.map((t) => t.id), autoAdvance);
     playTrack(track);
   };
 
@@ -439,6 +453,8 @@ export function TrackList() {
     lastIndexRef.current = i;
   };
 
+  if (view.kind === "banners") return <BannersView />;
+
   const beginDrag = (e: React.PointerEvent, t: Track) => {
     if (e.button !== 0) return;
     // Let clicks on interactive elements (checkbox etc.) through untouched
@@ -485,9 +501,54 @@ export function TrackList() {
           </div>
         )}
         <span className="text-xs text-muted-foreground">
-          {visible.length} track{visible.length === 1 ? "" : "s"}
+          {visible.length}{" "}
+          {view.kind === "videos"
+            ? `video${visible.length === 1 ? "" : "s"}`
+            : `track${visible.length === 1 ? "" : "s"}`}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {view.kind === "videos" && (
+            <div
+              role="group"
+              aria-label="Filter by hearts"
+              className="flex rounded-lg border border-border bg-surface-elevated p-0.5 text-xs"
+            >
+              {[0, 1, 2, 3].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setVideoHeartFilter(n)}
+                  aria-pressed={videoHeartFilter === n}
+                  title={
+                    n === 0
+                      ? "Show all videos"
+                      : `Only ${n}-heart videos`
+                  }
+                  className={`flex items-center gap-0.5 rounded-md px-2 py-1 transition ${
+                    videoHeartFilter === n
+                      ? "bg-accent font-medium text-accent-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {n === 0 ? (
+                    "All"
+                  ) : (
+                    <span className="flex items-center gap-px">
+                      {Array.from({ length: n }).map((_, i) => (
+                        <Heart
+                          key={i}
+                          className={`h-3 w-3 ${
+                            videoHeartFilter === n
+                              ? "fill-accent-foreground"
+                              : "fill-red-500 text-red-500"
+                          }`}
+                        />
+                      ))}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           {selectedTrackIds.length > 0 && (
             <>
               <button
@@ -657,6 +718,17 @@ export function TrackList() {
               </div>
             )}
           </div>
+        ) : view.kind === "videos" ? (
+          <VideoGrid
+            tracks={visible}
+            currentTrackId={currentTrackId}
+            isPlaying={isPlaying}
+            selectedIds={selectedTrackIds}
+            onPlay={rowPlay}
+            onCardClick={onRowClick}
+            onToggleSelect={toggleTrackSelected}
+            beginDrag={beginDrag}
+          />
         ) : (
           <table className="w-full border-collapse text-sm" role="grid" aria-label="Tracks">
             <thead className="sticky top-0 z-10 bg-surface">

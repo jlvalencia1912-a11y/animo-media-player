@@ -19,6 +19,7 @@ import { startBridge } from "./lib/bridge";
 import { startFileDropListener } from "./lib/dnd";
 import { stopRecording } from "./lib/recorder";
 import { startVideoBridge } from "./lib/videoWindow";
+import { startBannerBridge } from "./lib/bannerWindow";
 import { openMiniPlayer } from "./lib/window";
 
 interface ScanProgressPayload {
@@ -89,6 +90,9 @@ export function App() {
 
   // Video pop-up window bridge (state reports -> store)
   useEffect(() => startVideoBridge(), []);
+
+  // Banner display window bridge
+  useEffect(() => startBannerBridge(), []);
 
   // Embedded media server port (127.0.0.1) for audio/video streaming
   useEffect(() => {
