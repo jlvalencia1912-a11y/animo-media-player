@@ -21,6 +21,8 @@
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-inner-size",
     "core:window:allow-outer-position",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
     "core:event:default",
     "core:event:allow-emit-to"
   ]

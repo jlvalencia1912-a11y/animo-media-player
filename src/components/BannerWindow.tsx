@@ -3,6 +3,7 @@
 // commanded by the main window over Tauri events.
 import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Banner } from "../types";
 import { bannerImgStyle } from "../lib/bannerStyle";
@@ -28,6 +29,27 @@ export function BannerWindow() {
     });
     return () => {
       unlisten?.();
+    };
+  }, []);
+
+  // Double-click toggles true borderless fullscreen (no title/menu bar);
+  // Escape exits it.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const toggle = () => {
+      void win
+        .isFullscreen()
+        .then((fs) => win.setFullscreen(!fs))
+        .catch(() => {});
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") void win.setFullscreen(false).catch(() => {});
+    };
+    window.addEventListener("dblclick", toggle);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("dblclick", toggle);
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
 
