@@ -944,7 +944,16 @@ pub fn run() {
                     &MenuItem::with_id(app, "next", "Next", true, None::<&str>)?,
                 ])?,
             ])?;
+            // macOS puts this in the global menubar — fine to set app-wide.
+            // On Windows/Linux the app menu is drawn inside EVERY window
+            // (including the video + banner pop-ups), so attach it to the
+            // main window only.
+            #[cfg(target_os = "macos")]
             app.set_menu(menu)?;
+            #[cfg(not(target_os = "macos"))]
+            if let Some(main) = app.get_webview_window("main") {
+                main.set_menu(menu)?;
+            }
             app.on_menu_event(|app, ev| {
                 let _ = app.emit("amp:menu", ev.id().0.clone());
             });
