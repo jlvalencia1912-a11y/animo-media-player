@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff, Play, Pause, Heart } from "lucide-react";
+import { Search, ArrowUpDown, Music2, Music, FolderPlus, Sparkles, Tags, Youtube, GripVertical, Trash2, Video, Eye, EyeOff, Play, Pause, Heart, FolderOpen } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../store";
 import { RECORDING_EVENTS, RECORDING_TIMES } from "../types";
 import { startRecording, stopRecording } from "../lib/recorder";
@@ -87,6 +88,18 @@ function RecordControls() {
       >
         <span className={`text-red-500 ${recording ? "animate-pulse" : ""}`}>●</span>
         {recording ? "Stop" : "Record"}
+      </button>
+      <button
+        onClick={async () => {
+          const picked = await open({ directory: true, multiple: false });
+          if (picked && typeof picked === "string")
+            updateSettings({ recordingDir: picked });
+        }}
+        aria-label="Choose recordings folder"
+        title={`Save recordings to: ${settings.recordingDir || "~/Desktop/Animo Recordings (default)"}`}
+        className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-elevated px-2.5 text-xs text-muted-foreground transition hover:text-foreground"
+      >
+        <FolderOpen size={14} />
       </button>
     </>
   );

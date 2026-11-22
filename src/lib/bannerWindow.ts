@@ -32,8 +32,13 @@ export async function openBannerWindow(): Promise<void> {
   const existing = await WebviewWindow.getByLabel(LABEL);
   if (existing) {
     s.setBannerPopupOpen(true);
-    await existing.setSize(new LogicalSize(1200, 750)).catch(() => {});
-    await existing.center().catch(() => {});
+    // Resizing a fullscreen window drops it out of fullscreen — only
+    // re-fit when it isn't fullscreen.
+    const fs = await existing.isFullscreen().catch(() => false);
+    if (!fs) {
+      await existing.setSize(new LogicalSize(1200, 750)).catch(() => {});
+      await existing.center().catch(() => {});
+    }
     await existing.show().catch(() => {});
     await existing.setFocus().catch(() => {});
     return;
